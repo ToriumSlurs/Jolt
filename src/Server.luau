@@ -3,6 +3,7 @@ local Server = {}
 Server.__index = Server
 
 local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
 
 local Buffers = require("./Utils/Buffers")
 local Remotes = require("./Utils/Remotes")
@@ -11,138 +12,196 @@ local PACKET_EVENT = 1
 local PACKET_REQUEST = 2
 local PACKET_RESPONSE = 3
 
+local task_spawn = task.spawn
+local table_remove = table.remove
+local table_unpack = table.unpack
+local table_clear = table.clear
+
+local GlobalInitialized = false
+local Listeners = {} :: {[string]: (Player, ...any) -> ()}
+local InvokeHandlers = {} :: {[string]: (Player, ...any) -> ...any}
 local ActiveInstances = setmetatable({}, {__mode = "k"})
 
-task.spawn(function()
-	while task.wait(0.025) do
-		for inst in pairs(ActiveInstances) do
-			inst:_flush()
+local OutgoingReliable = {} :: {[Player]: Buffers.Writer}
+local OutgoingUnreliable = {} :: {[Player]: Buffers.Writer}
+
+local BroadcastReliable = nil :: Buffers.Writer?
+local BroadcastUnreliable = nil :: Buffers.Writer?
+
+local function Initialize()
+	if GlobalInitialized then return end
+	GlobalInitialized = true
+
+	local group = Remotes.Create()
+	local reliable = group.Reliable
+	local unreliable = group.Unreliable
+
+	RunService.Heartbeat:Connect(function()
+		for p, w in pairs(OutgoingReliable) do
+			local b, i = Buffers.Finalize(w)
+			reliable:FireClient(p, b, i)
+			Buffers.FreeWriter(w)
 		end
-	end
-end)
+		
+		table_clear(OutgoingReliable)
 
-export type Config = {
-	Unreliable: boolean?,
-}
+		for p, w in pairs(OutgoingUnreliable) do
+			local b, i = Buffers.Finalize(w)
+			unreliable:FireClient(p, b, i)
+			Buffers.FreeWriter(w)
+		end
+		table_clear(OutgoingUnreliable)
 
-function Server.new(name: string, config: Config?)
-	local self = setmetatable({}, Server)
+		if BroadcastReliable then
+			local b, i = Buffers.Finalize(BroadcastReliable)
+			reliable:FireAllClients(b, i)
+			Buffers.FreeWriter(BroadcastReliable)
+			BroadcastReliable = nil
+		end
 
-	self._remote = Remotes.Create(name, config and config.Unreliable)
-	self._outgoing = {} :: {[Player]: Buffers.Writer}
-	self._broadcast = nil :: Buffers.Writer?
-	self._listeners = {} :: {[(Player, ...any) -> ()]: true}
-
-	self.OnInvoke = nil :: ((Player, ...any) -> ...any)?
+		if BroadcastUnreliable then
+			local b, i = Buffers.Finalize(BroadcastUnreliable)
+			unreliable:FireAllClients(b, i)
+			Buffers.FreeWriter(BroadcastUnreliable)
+			BroadcastUnreliable = nil
+		end
+	end)
 
 	Players.PlayerRemoving:Connect(function(player)
-		if self._outgoing[player] then
-			Buffers.FreeWriter(self._outgoing[player])
-			self._outgoing[player] = nil
+		if OutgoingReliable[player] then
+			Buffers.FreeWriter(OutgoingReliable[player])
+			OutgoingReliable[player] = nil
+		end
+		if OutgoingUnreliable[player] then
+			Buffers.FreeWriter(OutgoingUnreliable[player])
+			OutgoingUnreliable[player] = nil
 		end
 	end)
 
-	self._remote.OnServerEvent:Connect(function(player, buff, insts)
-		self:_incoming(player, buff, insts)
-	end)
+	local function onEvent(player: Player, b: buffer, i: {Instance})
+		local r = Buffers.CreateReader(b, i)
 
-	ActiveInstances[self] = true
+		while r.cursor < r.len do
+			local id = Buffers.ReadString(r)
+			local type = Buffers.ReadU8(r)
+
+			if type == PACKET_EVENT then
+				local vals = Buffers.Unpack(r)
+				local cb = Listeners[id]
+				if cb then
+					task_spawn(cb, player, table_unpack(vals))
+				end
+			elseif type == PACKET_REQUEST then
+				local reqId = Buffers.ReadVarInt(r)
+				local vals = Buffers.Unpack(r)
+				local handler = InvokeHandlers[id]
+
+				if handler then
+					task_spawn(function()
+						local results = {pcall(handler, player, table_unpack(vals))}
+						local ok = results[1]
+						table_remove(results, 1)
+
+						local w = OutgoingReliable[player]
+						if not w then
+							w = Buffers.CreateWriter()
+							OutgoingReliable[player] = w
+						end
+
+						Buffers.WriteString(w, id)
+						Buffers.WriteU8(w, PACKET_RESPONSE)
+						Buffers.WriteVarInt(w, reqId)
+						Buffers.WriteU8(w, ok and 1 or 0)
+						Buffers.Pack(w, table_unpack(results))
+					end)
+				end
+			else
+				break
+			end
+		end
+		Buffers.FreeReader(r)
+	end
+
+	reliable.OnServerEvent:Connect(onEvent)
+	unreliable.OnServerEvent:Connect(onEvent)
+end
+
+function Server.new(name: string)
+	if not GlobalInitialized then
+		Initialize()
+	end
+
+	local self = setmetatable({}, Server)
+	self._id = name
 
 	return self
 end
 
 function Server:Connect(callback: (Player, ...any) -> ())
-	self._listeners[callback] = true
-
+	Listeners[self._id] = callback
 	return {
 		Disconnect = function()
-			self._listeners[callback] = nil
+			if Listeners[self._id] == callback then
+				Listeners[self._id] = nil
+			end
 		end,
 	}
 end
 
 function Server:Fire(player: Player, ...: any)
-	local w = self._outgoing[player]
-
+	local w = OutgoingReliable[player]
 	if not w then
 		w = Buffers.CreateWriter()
-		self._outgoing[player] = w
+		OutgoingReliable[player] = w
 	end
 
-	Buffers.WriteByte(w, PACKET_EVENT)
+	Buffers.WriteString(w, self._id)
+	Buffers.WriteU8(w, PACKET_EVENT)
+	Buffers.Pack(w, ...)
+end
+
+function Server:FireUnreliable(player: Player, ...: any)
+	local w = OutgoingUnreliable[player]
+	if not w then
+		w = Buffers.CreateWriter()
+		OutgoingUnreliable[player] = w
+	end
+
+	Buffers.WriteString(w, self._id)
+	Buffers.WriteU8(w, PACKET_EVENT)
 	Buffers.Pack(w, ...)
 end
 
 function Server:FireAll(...: any)
-	local w = self._broadcast
-
+	local w = BroadcastReliable
 	if not w then
 		w = Buffers.CreateWriter()
-		self._broadcast = w
+		BroadcastReliable = w
 	end
 
-	Buffers.WriteByte(w, PACKET_EVENT)
+	Buffers.WriteString(w, self._id)
+	Buffers.WriteU8(w, PACKET_EVENT)
 	Buffers.Pack(w, ...)
 end
 
-function Server:_flush()
-	for p, w in pairs(self._outgoing) do
-		local b, i = Buffers.Finalize(w)
-		self._remote:FireClient(p, b, i)
-		Buffers.FreeWriter(w)
+function Server:FireAllUnreliable(...: any)
+	local w = BroadcastUnreliable
+	if not w then
+		w = Buffers.CreateWriter()
+		BroadcastUnreliable = w
 	end
 
-	table.clear(self._outgoing)
-
-	if self._broadcast then
-		local b, i = Buffers.Finalize(self._broadcast)
-		self._remote:FireAllClients(b, i)
-		Buffers.FreeWriter(self._broadcast)
-		self._broadcast = nil
-	end
+	Buffers.WriteString(w, self._id)
+	Buffers.WriteU8(w, PACKET_EVENT)
+	Buffers.Pack(w, ...)
 end
 
-function Server:_incoming(player: Player, b: buffer, i: {Instance})
-	local r = Buffers.CreateReader(b, i)
-
-	while r.cursor < r.len do
-		local type = Buffers.ReadByte(r)
-
-		if type == PACKET_EVENT then
-			local vals = Buffers.Unpack(r)
-
-			for cb in pairs(self._listeners) do
-				task.spawn(cb, player, table.unpack(vals))
-			end
-		elseif type == PACKET_REQUEST then
-			local id = Buffers.ReadVarInt(r)
-			local vals = Buffers.Unpack(r)
-
-			if self.OnInvoke then
-				task.spawn(function()
-					local results = {pcall(self.OnInvoke, player, table.unpack(vals))}
-					local ok = results[1]
-					local w = self._outgoing[player]
-
-					if not w then
-						w = Buffers.CreateWriter()
-						self._outgoing[player] = w
-					end
-
-					table.remove(results, 1)
-
-					Buffers.WriteByte(w, PACKET_RESPONSE)
-					Buffers.WriteVarInt(w, id)
-					Buffers.WriteByte(w, ok and 1 or 0)
-					Buffers.Pack(w, table.unpack(results))
-				end)
-			end
-		else
-			break
-		end
+function Server:__newindex(k, v)
+	if k == "OnInvoke" then
+		InvokeHandlers[self._id] = v
+	else
+		rawset(self, k, v)
 	end
-
-	Buffers.FreeReader(r)
 end
 
 return Server
