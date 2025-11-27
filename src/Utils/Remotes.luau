@@ -1,28 +1,62 @@
 --!strict
 local Remotes = {}
 
-function Remotes.Get(name: string): RemoteEvent | UnreliableRemoteEvent
-	local remote = script:FindFirstChild(name)
-	if not remote then
-		error("Remote '" .. name .. "' doesn't exist. Ensure it is created on the server first.")
+local instance_new = Instance.new
+
+local RELIABLE_NAME = "Jolt_Reliable"
+local UNRELIABLE_NAME = "Jolt_Unreliable"
+
+export type RemoteGroup = {
+	Reliable: RemoteEvent,
+	Unreliable: UnreliableRemoteEvent,
+}
+
+local _cachedGroup: RemoteGroup? = nil
+
+function Remotes.Get(): RemoteGroup
+	if _cachedGroup then
+		return _cachedGroup
 	end
 
-	return remote :: RemoteEvent | UnreliableRemoteEvent
+	local reliable = script:WaitForChild(RELIABLE_NAME)
+	local unreliable = script:WaitForChild(UNRELIABLE_NAME)
+
+	if not reliable or not unreliable then
+		error("Jolt remotes not found. Ensure Jolt is initialized on the server.")
+	end
+
+	_cachedGroup = {
+		Reliable = reliable :: RemoteEvent,
+		Unreliable = unreliable :: UnreliableRemoteEvent,
+	}
+	return _cachedGroup :: RemoteGroup
 end
 
-function Remotes.Create(name: string, unreliable: boolean?): RemoteEvent | UnreliableRemoteEvent
-	local className = unreliable and "UnreliableRemoteEvent" or "RemoteEvent"
-	local remote = script:FindFirstChild(name)
-
-	if not remote then
-		remote = Instance.new(className)
-		remote.Name = name
-		remote.Parent = script
-	elseif not remote:IsA(className) then
-		error("Existing instance '" .. name .. "' in " .. script:GetFullName() .. " is not a " .. className)
+function Remotes.Create(): RemoteGroup
+	if _cachedGroup then
+		return _cachedGroup
 	end
 
-	return remote :: RemoteEvent | UnreliableRemoteEvent
+	local reliable = script:FindFirstChild(RELIABLE_NAME)
+	local unreliable = script:FindFirstChild(UNRELIABLE_NAME)
+
+	if not reliable then
+		reliable = instance_new("RemoteEvent")
+		reliable.Name = RELIABLE_NAME
+		reliable.Parent = script
+	end
+
+	if not unreliable then
+		unreliable = instance_new("UnreliableRemoteEvent")
+		unreliable.Name = UNRELIABLE_NAME
+		unreliable.Parent = script
+	end
+
+	_cachedGroup = {
+		Reliable = reliable :: RemoteEvent,
+		Unreliable = unreliable :: UnreliableRemoteEvent,
+	}
+	return _cachedGroup :: RemoteGroup
 end
 
 return Remotes
