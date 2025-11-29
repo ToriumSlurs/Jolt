@@ -13,6 +13,7 @@ local REQUEST_TIMEOUT = 60
 
 local task_spawn = task.spawn
 local task_delay = task.delay
+local task_defer = task.defer
 local coroutine_running = coroutine.running
 local coroutine_yield = coroutine.yield
 local table_unpack = table.unpack
@@ -25,29 +26,36 @@ local RequestIdCounters = {} :: {[string]: number}
 local OutgoingReliable = nil :: Buffers.Writer?
 local OutgoingUnreliable = nil :: Buffers.Writer?
 
+local reliable: RemoteEvent
+local unreliable: UnreliableRemoteEvent
+
+local function FlushReliable()
+	local w = OutgoingReliable
+	if w then
+		OutgoingReliable = nil
+		local b, i = Buffers.Finalize(w)
+		reliable:FireServer(b, i)
+		Buffers.FreeWriter(w)
+	end
+end
+
+local function FlushUnreliable()
+	local w = OutgoingUnreliable
+	if w then
+		OutgoingUnreliable = nil
+		local b, i = Buffers.Finalize(w)
+		unreliable:FireServer(b, i)
+		Buffers.FreeWriter(w)
+	end
+end
+
 local function Initialize()
 	if GlobalInitialized then return end
 	GlobalInitialized = true
 
 	local group = Remotes.Get()
-	local reliable = group.Reliable
-	local unreliable = group.Unreliable
-
-	RunService.PostSimulation:Connect(function()
-		if OutgoingReliable then
-			local b, i = Buffers.Finalize(OutgoingReliable)
-			reliable:FireServer(b, i)
-			Buffers.FreeWriter(OutgoingReliable)
-			OutgoingReliable = nil
-		end
-
-		if OutgoingUnreliable then
-			local b, i = Buffers.Finalize(OutgoingUnreliable)
-			unreliable:FireServer(b, i)
-			Buffers.FreeWriter(OutgoingUnreliable)
-			OutgoingUnreliable = nil
-		end
-	end)
+	reliable = group.Reliable
+	unreliable = group.Unreliable
 
 	local function onEvent(b: buffer, i: {Instance})
 		local r = Buffers.CreateReader(b, i)
@@ -118,6 +126,7 @@ function Client:Fire(...: any)
 	if not w then
 		w = Buffers.CreateWriter()
 		OutgoingReliable = w
+		task_defer(FlushReliable)
 	end
 
 	Buffers.WriteString(w, self._id)
@@ -130,6 +139,7 @@ function Client:FireUnreliable(...: any)
 	if not w then
 		w = Buffers.CreateWriter()
 		OutgoingUnreliable = w
+		task_defer(FlushUnreliable)
 	end
 
 	Buffers.WriteString(w, self._id)
@@ -145,6 +155,7 @@ function Client:Invoke(...: any)
 	if not w then
 		w = Buffers.CreateWriter()
 		OutgoingReliable = w
+		task_defer(FlushReliable)
 	end
 
 	Buffers.WriteString(w, self._id)
