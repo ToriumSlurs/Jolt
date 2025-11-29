@@ -13,70 +13,69 @@ local PACKET_REQUEST = 2
 local PACKET_RESPONSE = 3
 
 local task_spawn = task.spawn
+local task_defer = task.defer
 local table_remove = table.remove
 local table_unpack = table.unpack
-local table_clear = table.clear
 
 local GlobalInitialized = false
 local Listeners = {} :: {[string]: (Player, ...any) -> ()}
 local InvokeHandlers = {} :: {[string]: (Player, ...any) -> ...any}
-local ActiveInstances = setmetatable({}, {__mode = "k"})
 
 local OutgoingReliable = {} :: {[Player]: Buffers.Writer}
 local OutgoingUnreliable = {} :: {[Player]: Buffers.Writer}
-
 local BroadcastReliable = nil :: Buffers.Writer?
 local BroadcastUnreliable = nil :: Buffers.Writer?
+
+local reliable: RemoteEvent
+local unreliable: UnreliableRemoteEvent
+
+local function FlushReliable(player: Player)
+	local w = OutgoingReliable[player]
+	if w then
+		OutgoingReliable[player] = nil
+		local b, i = Buffers.Finalize(w)
+		reliable:FireClient(player, b, i)
+		Buffers.FreeWriter(w)
+	end
+end
+
+local function FlushUnreliable(player: Player)
+	local w = OutgoingUnreliable[player]
+	if w then
+		OutgoingUnreliable[player] = nil
+		local b, i = Buffers.Finalize(w)
+		unreliable:FireClient(player, b, i)
+		Buffers.FreeWriter(w)
+	end
+end
+
+local function FlushBroadcastReliable()
+	local w = BroadcastReliable
+	if w then
+		BroadcastReliable = nil
+		local b, i = Buffers.Finalize(w)
+		reliable:FireAllClients(b, i)
+		Buffers.FreeWriter(w)
+	end
+end
+
+local function FlushBroadcastUnreliable()
+	local w = BroadcastUnreliable
+	if w then
+		BroadcastUnreliable = nil
+		local b, i = Buffers.Finalize(w)
+		unreliable:FireAllClients(b, i)
+		Buffers.FreeWriter(w)
+	end
+end
 
 local function Initialize()
 	if GlobalInitialized then return end
 	GlobalInitialized = true
 
 	local group = Remotes.Create()
-	local reliable = group.Reliable
-	local unreliable = group.Unreliable
-
-	RunService.Heartbeat:Connect(function()
-		for p, w in pairs(OutgoingReliable) do
-			local b, i = Buffers.Finalize(w)
-			reliable:FireClient(p, b, i)
-			Buffers.FreeWriter(w)
-		end
-		
-		table_clear(OutgoingReliable)
-
-		for p, w in pairs(OutgoingUnreliable) do
-			local b, i = Buffers.Finalize(w)
-			unreliable:FireClient(p, b, i)
-			Buffers.FreeWriter(w)
-		end
-		table_clear(OutgoingUnreliable)
-
-		if BroadcastReliable then
-			local b, i = Buffers.Finalize(BroadcastReliable)
-			reliable:FireAllClients(b, i)
-			Buffers.FreeWriter(BroadcastReliable)
-			BroadcastReliable = nil
-		end
-
-		if BroadcastUnreliable then
-			local b, i = Buffers.Finalize(BroadcastUnreliable)
-			unreliable:FireAllClients(b, i)
-			Buffers.FreeWriter(BroadcastUnreliable)
-			BroadcastUnreliable = nil
-		end
-	end)
-
-	Players.PlayerRemoving:Connect(function(player)
-		if OutgoingReliable[player] then
-			Buffers.FreeWriter(OutgoingReliable[player])
-			OutgoingReliable[player] = nil
-		end
-		if OutgoingUnreliable[player] then
-			Buffers.FreeWriter(OutgoingUnreliable[player])
-			OutgoingUnreliable[player] = nil
-		end
-	end)
+	reliable = group.Reliable
+	unreliable = group.Unreliable
 
 	local function onEvent(player: Player, b: buffer, i: {Instance})
 		local r = Buffers.CreateReader(b, i)
@@ -106,6 +105,7 @@ local function Initialize()
 						if not w then
 							w = Buffers.CreateWriter()
 							OutgoingReliable[player] = w
+							task_defer(FlushReliable, player)
 						end
 
 						Buffers.WriteString(w, id)
@@ -153,6 +153,7 @@ function Server:Fire(player: Player, ...: any)
 	if not w then
 		w = Buffers.CreateWriter()
 		OutgoingReliable[player] = w
+		task_defer(FlushReliable, player)
 	end
 
 	Buffers.WriteString(w, self._id)
@@ -165,6 +166,7 @@ function Server:FireUnreliable(player: Player, ...: any)
 	if not w then
 		w = Buffers.CreateWriter()
 		OutgoingUnreliable[player] = w
+		task_defer(FlushUnreliable, player)
 	end
 
 	Buffers.WriteString(w, self._id)
@@ -177,6 +179,7 @@ function Server:FireAll(...: any)
 	if not w then
 		w = Buffers.CreateWriter()
 		BroadcastReliable = w
+		task_defer(FlushBroadcastReliable)
 	end
 
 	Buffers.WriteString(w, self._id)
@@ -189,6 +192,7 @@ function Server:FireAllUnreliable(...: any)
 	if not w then
 		w = Buffers.CreateWriter()
 		BroadcastUnreliable = w
+		task_defer(FlushBroadcastUnreliable)
 	end
 
 	Buffers.WriteString(w, self._id)
