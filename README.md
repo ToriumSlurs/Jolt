@@ -11,7 +11,16 @@
 
 ## 📖 About
 
-**Jolt** is a lightweight networking library designed to replace standard `RemoteEvent`, `UnreliableRemoteEvent` and `RemoteFunction` usage with a streamlined, strictly typed API. 
+**Jolt** is a lightweight networking library designed to replace standard `RemoteEvent`, `UnreliableRemoteEvent` and `RemoteFunction` usage with a streamlined, strictly typed API.
+
+If you have used the [Warp](https://github.com/imezx/Warp) networking library before, you will find Jolt's API very familiar. Since Warp has been archived, I wanted to create a modern, reliable alternative that developers can count on, including myself. 
+## 🤝 Contributing & Feedback 
+I am actively looking for help with: 
+* **Testing:** properly testing the module, especially covering edge cases. 
+* **Improvements:** suggestions or PRs to improve performance or usability. 
+* **Bug Fixes:** identifying and fixing any issues that arise. 
+
+If you're interested in helping out or just want to use a maintained, high-performance networking library, please check it out!
 
 ## ✨ Features
 
