@@ -77,6 +77,7 @@ Jolt automatically serializes the following types:
 
 * `nil`
 * `boolean`
+* `buffer`
 * `number`
 * `string`
 * `table`
@@ -86,6 +87,7 @@ Jolt automatically serializes the following types:
 * `CFrame`
 * `Color3`
 * `BrickColor`
+* `Region3`
 * `EnumItem`
 * `UDim`, `UDim2`
 * `TweenInfo`
