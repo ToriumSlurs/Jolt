@@ -30,7 +30,7 @@ export type Client<Args... = (...any), Out... = (...any)> = {
 
 	```luau
 	local myEvent = Jolt.Server("MyEvent") :: Jolt.Server<{ Arg: string }>
-	myEvent.Fire(player, { Arg = "Hello World" })
+	myEvent:Fire(player, { Arg = "Hello World" })
 
 	local myInvokeEvent = Jolt.Server("MyInvokeEvent") :: Jolt.Server<(), (boolean, string)>
 	myEvent.OnInvoke = function(player)
@@ -51,12 +51,12 @@ end
 
 	```luau
 	local myEvent = Jolt.Client("MyEvent") :: Jolt.Client<{ Arg: string }>
-	myEvent.Connect(function(data)
+	myEvent:Connect(function(data)
 		print(data.Arg)
 	end)
 
 	local myInvokeEvent = Jolt.Client("MyInvokeEvent") :: Jolt.Client<(), (boolean, string)>
-	local success, message = myEvent.Invoke()
+	local success, message = myEvent:Invoke()
 	```
 ]]
 function Jolt.Client<Args..., Out...>(name: string): Client<Args..., Out...>
