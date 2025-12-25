@@ -13,13 +13,19 @@ local PACKET_RESPONSE = 3
 local task_spawn = task.spawn
 local table_remove = table.remove
 local table_unpack = table.unpack
-local bit32_band = bit32.band
-local bit32_rshift = bit32.rshift
-local bit32_lshift = bit32.lshift
-local bit32_bor = bit32.bor
 
 local GlobalInitialized = false
-local Listeners = {} :: {[string]: (Player, ...any) -> ()}
+type Listener = {
+	__type: "Connect",
+	Callback: (Player, ...any) -> (),
+} | {
+	__type: "Once",
+	Callback: (Player, ...any) -> (),
+} | {
+	__type: "Wait",
+	Thread: thread,
+}
+local Listeners = {} :: {[string]: {Listener}}
 local InvokeHandlers = {} :: {[string]: (Player, ...any) -> ...any}
 
 local reliable: RemoteEvent
@@ -37,9 +43,24 @@ local function Initialize()
 	local function dispatch(player: Player, id: string, args: {any}, count: number)
 		local type = args[1]
 		if type == PACKET_EVENT then
-			local cb = Listeners[id]
-			if cb then
-				task_spawn(cb, player, table_unpack(args, 2, count))
+			local listeners = Listeners[id]
+			if not listeners then
+				return
+			end
+
+			for i = #listeners, 1, -1 do
+				local listener = listeners[i]
+				if listener then
+					if listener.__type == "Connect" then
+						task_spawn(listener.Callback, player, table_unpack(args, 2, count))
+					elseif listener.__type == "Once" then
+						task_spawn(listener.Callback, player, table_unpack(args, 2, count))
+						table.remove(listeners, i)
+					elseif listener.__type == "Wait" then
+						task_spawn(listener.Thread, player, table_unpack(args, 2, count))
+						table.remove(listeners, i)
+					end
+				end
 			end
 		elseif type == PACKET_REQUEST then
 			local reqId = args[2]
@@ -103,14 +124,54 @@ function Server.new(name: string)
 end
 
 function Server:Connect(callback: (Player, ...any) -> ())
-	Listeners[self._id] = callback
+	if not Listeners[self._id] then
+		Listeners[self._id] = {}
+	end
+
+	local newListener: Listener = {
+		__type = "Connect",
+		Callback = callback,
+	}
+	table.insert(Listeners[self._id], newListener)
+
 	return {
 		Disconnect = function()
-			if Listeners[self._id] == callback then
-				Listeners[self._id] = nil
+			if not Listeners[self._id] then
+				return
+			end
+			for i, listener in ipairs(Listeners[self._id]) do
+				if listener == newListener then
+					table.remove(Listeners[self._id], i)
+					break
+				end
 			end
 		end,
 	}
+end
+
+function Server:Once(callback: (Player, ...any) -> ())
+	if not Listeners[self._id] then
+		Listeners[self._id] = {}
+	end
+
+	table.insert(Listeners[self._id], ({
+		__type = "Once",
+		Callback = callback,
+	} :: Listener))
+end
+
+function Server:Wait()
+	if not Listeners[self._id] then
+		Listeners[self._id] = {}
+	end
+
+	local thread = coroutine.running()
+	table.insert(Listeners[self._id], ({
+		__type = "Wait",
+		Thread = thread,
+	} :: Listener))
+
+	return coroutine.yield()
 end
 
 local function Send(self: any, reliable: boolean, player: Player?, packetType: number, ...: any)
