@@ -36,48 +36,64 @@ If you're interested in helping out or just want to use a maintained, high-perfo
 ```lua
 local Jolt = require(path.to.Jolt)
 
--- Create a network object (automatically creates reliable and unreliable channels)
+-- Create a new event
 local MyEvent = Jolt.Server("MyEvent")
 
--- Listen for events (receives from both channels)
-MyEvent:Connect(function(player, data)
-    print(player.Name, "sent:", data)
+-- Fire an event to a client
+MyEvent:Fire(player, "Hello from the server!")
+
+-- Listen for client events
+MyEvent:Connect(function(player, message)
+    print(player.Name, "sent:", message)
 end)
 
--- Handle invokes
-MyEvent.OnInvoke = function(player, requestData)
-    return "Response to " .. player.Name
+-- Handle client invokes
+MyEvent.OnInvoke = function(player, data)
+	return "Hello, " .. player.Name .. "!"
 end
-
--- Fire Reliable (Important data)
-MyEvent:Fire(somePlayer, "Hello World!")
-MyEvent:FireAll("Attention everyone!")
-
--- Fire Unreliable (Fast, volatile data like positions/effects)
-MyEvent:FireUnreliable(somePlayer, workspace.Part.Position)
-MyEvent:FireAllUnreliable(workspace.Part.Position)
 ```
 
 ### Client Example
 ```lua
 local Jolt = require(path.to.Jolt)
 
+-- Create a new event
 local MyEvent = Jolt.Client("MyEvent")
 
--- Listen for events
-MyEvent:Connect(function(data)
-    print("Server sent:", data)
+-- Listen for server events
+MyEvent:Connect(function(message)
+    print("Server sent:", message)
 end)
 
--- Fire Reliable
-MyEvent:Fire("Hello World!")
+-- Fire an event to the server
+MyEvent:Fire("Hello from the client!")
 
--- Fire Unreliable
-MyEvent:FireUnreliable(LocalPlayer.Character.HumanoidRootPart.Position)
+-- Invoke the server
+local response = MyEvent:Invoke()
+print(response) -- "Hello, Player1!"
+```
 
--- Invoke the server and wait for a response
-local response = MyEvent:Invoke("Can I buy this?")
-print(response)
+### With Generics
+For enhanced type safety, you can provide a type cast to your Jolt objects. The generic parameters are `<Args...>` for event/invoke arguments and `<Out...>` for invoke return values.
+
+```lua
+-- Server
+local myEvent = Jolt.Server("MyEvent") :: Jolt.Server<{ Arg: string }>
+myEvent:Fire(player, { Arg = "Hello World" })
+
+local myInvokeEvent = Jolt.Server("MyInvokeEvent") :: Jolt.Server<(), (boolean, string)>
+myInvokeEvent.OnInvoke = function(player)
+  return true, "Success!"
+end
+
+-- Client
+local myEvent = Jolt.Client("MyEvent") :: Jolt.Client<{ Arg: string }>
+myEvent:Connect(function(data)
+  print(data.Arg)
+end)
+
+local myInvokeEvent = Jolt.Client("MyInvokeEvent") :: Jolt.Client<(), (boolean, string)>
+local success, message = myInvokeEvent:Invoke()
 ```
 
 ## 📦 Supported Types
