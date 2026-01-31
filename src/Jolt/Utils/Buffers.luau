@@ -1,7 +1,6 @@
 --!strict
 --!native
 --!optimize 2
-
 local Buffers = {}
 
 local b_create = buffer.create
@@ -26,9 +25,6 @@ local b_r_f64 = buffer.readf64
 local b_w_str = buffer.writestring
 local b_r_str = buffer.readstring
 
-local math_floor = math.floor
-local math_pi = math.pi
-
 local t_insert = table.insert
 local t_remove = table.remove
 local t_clear = table.clear
@@ -43,19 +39,23 @@ export type Writer = {
 	buff: buffer,
 	cursor: number,
 	len: number,
-	insts: {Instance}
+	insts: { Instance },
+	refs: { [ { [any]: any } ]: number },
+	refCount: number,
 }
 
 export type Reader = {
 	buff: buffer,
 	cursor: number,
 	len: number,
-	insts: {Instance}
+	insts: { Instance },
+	refs: { [number]: any },
+	refCount: number,
 }
 
-local ALLOC_SIZE = 4096 
+local ALLOC_SIZE = 4096
 local POOL_SIZE = 512
-local MAX_REUSE_SIZE = 64 * 1024 
+local MAX_REUSE_SIZE = 64 * 1024
 
 local TYPE_NIL = 0
 local TYPE_BOOL = 1
@@ -79,12 +79,16 @@ local TYPE_INT_U16 = 18
 local TYPE_INT_U32 = 19
 local TYPE_INT_I16 = 20
 local TYPE_INT_I32 = 21
+local TYPE_REF = 22
+local TYPE_ARRAY = 23
+local TYPE_STRING_U8 = 24
+local TYPE_STRING_U16 = 25
 
-local WriterPool = t_create(POOL_SIZE)
-local ReaderPool = t_create(POOL_SIZE)
+local WriterPool: { [number]: Writer } = {}
+local ReaderPool: { [number]: Reader } = {}
 
-local EnumCache = {} :: {[EnumItem]: string}
-local StringToEnumCache = {} :: {[string]: EnumItem}
+local EnumCache: { [EnumItem]: string } = {}
+local StringToEnumCache: { [string]: EnumItem } = {}
 
 local function Resize(w: Writer, needed: number)
 	local oldLen = w.len
@@ -100,29 +104,43 @@ local function Resize(w: Writer, needed: number)
 	end
 end
 
+function Buffers.EnsureCapacity(w: Writer, needed: number)
+	if w.cursor + needed > w.len then
+		Resize(w, needed)
+	end
+end
+
 function Buffers.CreateWriter(capacity: number?): Writer
 	local w = t_remove(WriterPool)
 	if w then
+		w.cursor = 0
+		w.refCount = 0
+		t_clear(w.insts)
+		t_clear(w.refs)
 		return w
 	end
 
-	capacity = capacity or ALLOC_SIZE
+	local cap = capacity or ALLOC_SIZE
 
 	return {
-		buff = b_create(capacity :: number),
+		buff = b_create(cap),
 		cursor = 0,
-		len = capacity :: number,
-		insts = {}
+		len = cap,
+		insts = {},
+		refs = {},
+		refCount = 0,
 	}
 end
 
-function Buffers.CreateReader(buff: buffer, instances: {Instance}?): Reader
+function Buffers.CreateReader(buff: buffer, instances: { Instance }?): Reader
 	local r = t_remove(ReaderPool)
 	if r then
 		r.buff = buff
 		r.cursor = 0
 		r.len = b_len(buff)
 		r.insts = instances or {}
+		r.refCount = 0
+		t_clear(r.refs)
 		return r
 	end
 
@@ -130,7 +148,9 @@ function Buffers.CreateReader(buff: buffer, instances: {Instance}?): Reader
 		buff = buff,
 		cursor = 0,
 		len = b_len(buff),
-		insts = instances or {}
+		insts = instances or {},
+		refs = {},
+		refCount = 0,
 	}
 end
 
@@ -139,117 +159,162 @@ function Buffers.FreeWriter(w: Writer)
 		return
 	end
 
-	w.cursor = 0
-	t_clear(w.insts)
 	if #WriterPool < POOL_SIZE then
 		t_insert(WriterPool, w)
 	end
 end
 
 function Buffers.FreeReader(r: Reader)
-	r.insts = {} :: any
 	if #ReaderPool < POOL_SIZE then
 		t_insert(ReaderPool, r)
 	end
 end
 
-function Buffers.Finalize(w: Writer): (buffer, {Instance})
+function Buffers.Finalize(w: Writer): (buffer, { Instance })
 	local b = b_create(w.cursor)
 	b_copy(b, 0, w.buff, 0, w.cursor)
 	return b, table.clone(w.insts)
 end
 
 function Buffers.WriteU8(w: Writer, v: number)
-	if w.cursor + 1 > w.len then Resize(w, 1) end
+	if w.cursor + 1 > w.len then
+		Resize(w, 1)
+	end
 	b_w_u8(w.buff, w.cursor, v)
 	w.cursor += 1
 end
 
 function Buffers.ReadU8(r: Reader): number
+	if r.cursor + 1 > r.len then
+		r.cursor = r.len
+		return 0
+	end
 	local v = b_r_u8(r.buff, r.cursor)
 	r.cursor += 1
 	return v
 end
 
 function Buffers.WriteU16(w: Writer, v: number)
-	if w.cursor + 2 > w.len then Resize(w, 2) end
+	if w.cursor + 2 > w.len then
+		Resize(w, 2)
+	end
 	b_w_u16(w.buff, w.cursor, v)
 	w.cursor += 2
 end
 
 function Buffers.ReadU16(r: Reader): number
+	if r.cursor + 2 > r.len then
+		r.cursor = r.len
+		return 0
+	end
 	local v = b_r_u16(r.buff, r.cursor)
 	r.cursor += 2
 	return v
 end
 
 function Buffers.WriteU32(w: Writer, v: number)
-	if w.cursor + 4 > w.len then Resize(w, 4) end
+	if w.cursor + 4 > w.len then
+		Resize(w, 4)
+	end
 	b_w_u32(w.buff, w.cursor, v)
 	w.cursor += 4
 end
 
 function Buffers.ReadU32(r: Reader): number
+	if r.cursor + 4 > r.len then
+		r.cursor = r.len
+		return 0
+	end
 	local v = b_r_u32(r.buff, r.cursor)
 	r.cursor += 4
 	return v
 end
 
 function Buffers.WriteI8(w: Writer, v: number)
-	if w.cursor + 1 > w.len then Resize(w, 1) end
+	if w.cursor + 1 > w.len then
+		Resize(w, 1)
+	end
 	b_w_i8(w.buff, w.cursor, v)
 	w.cursor += 1
 end
 
 function Buffers.ReadI8(r: Reader): number
+	if r.cursor + 1 > r.len then
+		r.cursor = r.len
+		return 0
+	end
 	local v = b_r_i8(r.buff, r.cursor)
 	r.cursor += 1
 	return v
 end
 
 function Buffers.WriteI16(w: Writer, v: number)
-	if w.cursor + 2 > w.len then Resize(w, 2) end
+	if w.cursor + 2 > w.len then
+		Resize(w, 2)
+	end
 	b_w_i16(w.buff, w.cursor, v)
 	w.cursor += 2
 end
 
 function Buffers.ReadI16(r: Reader): number
+	if r.cursor + 2 > r.len then
+		r.cursor = r.len
+		return 0
+	end
 	local v = b_r_i16(r.buff, r.cursor)
 	r.cursor += 2
 	return v
 end
 
 function Buffers.WriteI32(w: Writer, v: number)
-	if w.cursor + 4 > w.len then Resize(w, 4) end
+	if w.cursor + 4 > w.len then
+		Resize(w, 4)
+	end
 	b_w_i32(w.buff, w.cursor, v)
 	w.cursor += 4
 end
 
 function Buffers.ReadI32(r: Reader): number
+	if r.cursor + 4 > r.len then
+		r.cursor = r.len
+		return 0
+	end
 	local v = b_r_i32(r.buff, r.cursor)
 	r.cursor += 4
 	return v
 end
 
 function Buffers.WriteF32(w: Writer, v: number)
-	if w.cursor + 4 > w.len then Resize(w, 4) end
+	if w.cursor + 4 > w.len then
+		Resize(w, 4)
+	end
 	b_w_f32(w.buff, w.cursor, v)
 	w.cursor += 4
 end
 
 function Buffers.ReadF32(r: Reader): number
+	if r.cursor + 4 > r.len then
+		r.cursor = r.len
+		return 0
+	end
 	local v = b_r_f32(r.buff, r.cursor)
 	r.cursor += 4
 	return v
 end
 
 function Buffers.WriteF64(w: Writer, v: number)
-	if w.cursor + 8 > w.len then Resize(w, 8) end
+	if w.cursor + 8 > w.len then
+		Resize(w, 8)
+	end
 	b_w_f64(w.buff, w.cursor, v)
 	w.cursor += 8
 end
 
 function Buffers.ReadF64(r: Reader): number
+	if r.cursor + 8 > r.len then
+		r.cursor = r.len
+		return 0
+	end
 	local v = b_r_f64(r.buff, r.cursor)
 	r.cursor += 8
 	return v
@@ -264,13 +329,16 @@ function Buffers.ReadBool(r: Reader): boolean
 end
 
 function Buffers.WriteVarInt(w: Writer, v: number)
-	if w.cursor + 5 > w.len then Resize(w, 5) end
-	while v >= 128 do
-		b_w_u8(w.buff, w.cursor, b_bor(v, 0x80))
-		w.cursor += 1
-		v = b_rshift(v, 7)
+	if w.cursor + 5 > w.len then
+		Resize(w, 5)
 	end
-	b_w_u8(w.buff, w.cursor, v)
+	local val = v
+	while val >= 128 do
+		b_w_u8(w.buff, w.cursor, b_bor(val, 0x80))
+		w.cursor += 1
+		val = b_rshift(val, 7)
+	end
+	b_w_u8(w.buff, w.cursor, val)
 	w.cursor += 1
 end
 
@@ -279,6 +347,10 @@ function Buffers.ReadVarInt(r: Reader): number
 	local v = 0
 	local b
 	repeat
+		if r.cursor + 1 > r.len then
+			r.cursor = r.len
+			return 0
+		end
 		b = b_r_u8(r.buff, r.cursor)
 		r.cursor += 1
 		v = b_bor(v, b_lshift(b_band(b, 0x7F), c))
@@ -290,13 +362,19 @@ end
 function Buffers.WriteString(w: Writer, v: string)
 	local len = #v
 	Buffers.WriteVarInt(w, len)
-	if w.cursor + len > w.len then Resize(w, len) end
+	if w.cursor + len > w.len then
+		Resize(w, len)
+	end
 	b_w_str(w.buff, w.cursor, v, len)
 	w.cursor += len
 end
 
 function Buffers.ReadString(r: Reader): string
 	local len = Buffers.ReadVarInt(r)
+	if r.cursor + len > r.len then
+		r.cursor = r.len
+		return ""
+	end
 	local v = b_r_str(r.buff, r.cursor, len)
 	r.cursor += len
 	return v
@@ -305,13 +383,19 @@ end
 function Buffers.WriteBuffer(w: Writer, v: buffer)
 	local len = b_len(v)
 	Buffers.WriteVarInt(w, len)
-	if w.cursor + len > w.len then Resize(w, len) end
+	if w.cursor + len > w.len then
+		Resize(w, len)
+	end
 	b_copy(w.buff, w.cursor, v, 0, len)
 	w.cursor += len
 end
 
 function Buffers.ReadBuffer(r: Reader): buffer
 	local len = Buffers.ReadVarInt(r)
+	if r.cursor + len > r.len then
+		r.cursor = r.len
+		return b_create(0)
+	end
 	local b = b_create(len)
 	b_copy(b, 0, r.buff, r.cursor, len)
 	r.cursor += len
@@ -352,9 +436,9 @@ function Buffers.ReadCFrame(r: Reader): CFrame
 end
 
 function Buffers.WriteColor3(w: Writer, v: Color3)
-	Buffers.WriteU8(w, math_floor(v.R * 255))
-	Buffers.WriteU8(w, math_floor(v.G * 255))
-	Buffers.WriteU8(w, math_floor(v.B * 255))
+	Buffers.WriteU8(w, math.round(v.R * 255))
+	Buffers.WriteU8(w, math.round(v.G * 255))
+	Buffers.WriteU8(w, math.round(v.B * 255))
 end
 
 function Buffers.ReadColor3(r: Reader): Color3
@@ -387,7 +471,7 @@ end
 function Buffers.ReadRegion3(r: Reader): Region3
 	local cf = Buffers.ReadCFrame(r)
 	local size = Buffers.ReadVector3(r)
-	return Region3.new(cf.Position - size/2, cf.Position + size/2)
+	return Region3.new(cf.Position - size / 2, cf.Position + size / 2)
 end
 
 function Buffers.WriteInstance(w: Writer, v: Instance)
@@ -412,20 +496,28 @@ end
 function Buffers.ReadEnum(r: Reader): EnumItem?
 	local str = Buffers.ReadString(r)
 	local v = StringToEnumCache[str]
-	if v then return v end
+	if v then
+		return v
+	end
 
-	local parts = string.split(str, ".")
-	if #parts == 3 and parts[1] == "Enum" then
-		local enumName = parts[2]
-		local itemName = parts[3]
+	local firstDot = string.find(str, ".", 1, true)
+	if not firstDot then
+		return nil
+	end
+	local secondDot = string.find(str, ".", firstDot + 1, true)
+	if not secondDot then
+		return nil
+	end
 
-		local enum = (Enum :: any)[enumName]
-		if enum then
-			local item = enum[itemName]
-			if item then
-				StringToEnumCache[str] = item
-				return item
-			end
+	local enumName = string.sub(str, firstDot + 1, secondDot - 1)
+	local itemName = string.sub(str, secondDot + 1)
+
+	local enum = (Enum :: any)[enumName]
+	if enum then
+		local item = enum[itemName]
+		if item then
+			StringToEnumCache[str] = item
+			return item
 		end
 	end
 	return nil
@@ -443,19 +535,19 @@ function Buffers.WriteTweenInfo(w: Writer, v: TweenInfo)
 	Buffers.WriteF64(w, v.Time)
 	Buffers.WriteEnum(w, v.EasingStyle)
 	Buffers.WriteEnum(w, v.EasingDirection)
-	Buffers.WriteF64(w, v.RepeatCount)
+	Buffers.WriteI32(w, v.RepeatCount)
 	Buffers.WriteBool(w, v.Reverses)
 	Buffers.WriteF64(w, v.DelayTime)
 end
 
 function Buffers.ReadTweenInfo(r: Reader): TweenInfo
 	local t = Buffers.ReadF64(r)
-	local es = Buffers.ReadEnum(r) :: Enum.EasingStyle
-	local ed = Buffers.ReadEnum(r) :: Enum.EasingDirection
-	local rc = Buffers.ReadF64(r)
+	local es = Buffers.ReadEnum(r) or Enum.EasingStyle.Linear
+	local ed = Buffers.ReadEnum(r) or Enum.EasingDirection.In
+	local rc = Buffers.ReadI32(r)
 	local rev = Buffers.ReadBool(r)
 	local dt = Buffers.ReadF64(r)
-	return TweenInfo.new(t, es, ed, rc, rev, dt)
+	return TweenInfo.new(t, es :: Enum.EasingStyle, ed :: Enum.EasingDirection, rc, rev, dt)
 end
 
 function Buffers.WritePacketHeader(w: Writer, packetType: number, n: number)
@@ -471,8 +563,14 @@ function Buffers.ReadPacketHeader(r: Reader): (number, number)
 	local h = Buffers.ReadU8(r)
 	local t = b_rshift(h, 6)
 	local c = b_band(h, 0x3F)
-	if c == 63 then c = Buffers.ReadVarInt(r) end
+	if c == 63 then
+		c = Buffers.ReadVarInt(r)
+	end
 	return t, c
+end
+
+local function isPureArray(t: { any }): boolean
+	return #t > 0 and next(t, #t) == nil
 end
 
 function Buffers.WriteAny(w: Writer, v: any)
@@ -516,8 +614,22 @@ function Buffers.WriteAny(w: Writer, v: any)
 			Buffers.WriteF64(w, v)
 		end
 	elseif t == "string" then
-		Buffers.WriteU8(w, TYPE_STRING)
-		Buffers.WriteString(w, v)
+		local len = #v
+		if len <= 255 then
+			Buffers.WriteU8(w, TYPE_STRING_U8)
+			Buffers.WriteU8(w, len)
+		elseif len <= 65535 then
+			Buffers.WriteU8(w, TYPE_STRING_U16)
+			Buffers.WriteU16(w, len)
+		else
+			Buffers.WriteU8(w, TYPE_STRING)
+			Buffers.WriteVarInt(w, len)
+		end
+		if w.cursor + len > w.len then
+			Resize(w, len)
+		end
+		b_w_str(w.buff, w.cursor, v, len)
+		w.cursor += len
 	elseif t == "buffer" then
 		Buffers.WriteU8(w, TYPE_BUFFER)
 		Buffers.WriteBuffer(w, v)
@@ -555,51 +667,125 @@ function Buffers.WriteAny(w: Writer, v: any)
 		Buffers.WriteU8(w, TYPE_TWEENINFO)
 		Buffers.WriteTweenInfo(w, v)
 	elseif t == "table" then
-		Buffers.WriteU8(w, TYPE_TABLE)
-		for k, val in pairs(v) do
-			Buffers.WriteAny(w, k)
-			Buffers.WriteAny(w, val)
+		local ref = w.refs[v]
+		if ref then
+			Buffers.WriteU8(w, TYPE_REF)
+			Buffers.WriteVarInt(w, ref)
+		elseif isPureArray(v) then
+			w.refCount += 1
+			w.refs[v] = w.refCount
+			Buffers.WriteU8(w, TYPE_ARRAY)
+			local len = #v
+			Buffers.WriteVarInt(w, len)
+			for i = 1, len do
+				Buffers.WriteAny(w, v[i])
+			end
+		else
+			w.refCount += 1
+			w.refs[v] = w.refCount
+			Buffers.WriteU8(w, TYPE_TABLE)
+			for k, val in pairs(v) do
+				Buffers.WriteAny(w, k)
+				Buffers.WriteAny(w, val)
+			end
+			Buffers.WriteU8(w, TYPE_NIL)
 		end
-		Buffers.WriteU8(w, TYPE_NIL)
 	else
-		warn("Unsupported type: " .. t)
 		Buffers.WriteU8(w, TYPE_NIL)
 	end
 end
 
 function Buffers.ReadAny(r: Reader): any
+	if r.cursor >= r.len then
+		return nil
+	end
 	local typeId = Buffers.ReadU8(r)
 
-	if typeId == TYPE_NIL then return nil
-	elseif typeId == TYPE_BOOL then return Buffers.ReadBool(r)
-	elseif typeId == TYPE_NUMBER then return Buffers.ReadF64(r)
-	elseif typeId == TYPE_STRING then return Buffers.ReadString(r)
-	elseif typeId == TYPE_BUFFER then return Buffers.ReadBuffer(r)
-	elseif typeId == TYPE_VECTOR2 then return Buffers.ReadVector2(r)
-	elseif typeId == TYPE_VECTOR3 then return Buffers.ReadVector3(r)
-	elseif typeId == TYPE_CFRAME then return Buffers.ReadCFrame(r)
-	elseif typeId == TYPE_COLOR3 then return Buffers.ReadColor3(r)
-	elseif typeId == TYPE_UDIM then return Buffers.ReadUDim(r)
-	elseif typeId == TYPE_UDIM2 then return Buffers.ReadUDim2(r)
-	elseif typeId == TYPE_REGION3 then return Buffers.ReadRegion3(r)
-	elseif typeId == TYPE_INSTANCE then return Buffers.ReadInstance(r)
-	elseif typeId == TYPE_ENUM then return Buffers.ReadEnum(r)
-	elseif typeId == TYPE_BRICKCOLOR then return Buffers.ReadBrickColor(r)
-	elseif typeId == TYPE_TWEENINFO then return Buffers.ReadTweenInfo(r)
+	if typeId == TYPE_NIL then
+		return nil
+	elseif typeId == TYPE_BOOL then
+		return Buffers.ReadBool(r)
+	elseif typeId == TYPE_NUMBER then
+		return Buffers.ReadF64(r)
+	elseif typeId == TYPE_STRING then
+		return Buffers.ReadString(r)
+	elseif typeId == TYPE_STRING_U8 then
+		local len = Buffers.ReadU8(r)
+		if r.cursor + len > r.len then
+			r.cursor = r.len
+			return ""
+		end
+		local v = b_r_str(r.buff, r.cursor, len)
+		r.cursor += len
+		return v
+	elseif typeId == TYPE_STRING_U16 then
+		local len = Buffers.ReadU16(r)
+		if r.cursor + len > r.len then
+			r.cursor = r.len
+			return ""
+		end
+		local v = b_r_str(r.buff, r.cursor, len)
+		r.cursor += len
+		return v
+	elseif typeId == TYPE_BUFFER then
+		return Buffers.ReadBuffer(r)
+	elseif typeId == TYPE_VECTOR2 then
+		return Buffers.ReadVector2(r)
+	elseif typeId == TYPE_VECTOR3 then
+		return Buffers.ReadVector3(r)
+	elseif typeId == TYPE_CFRAME then
+		return Buffers.ReadCFrame(r)
+	elseif typeId == TYPE_COLOR3 then
+		return Buffers.ReadColor3(r)
+	elseif typeId == TYPE_UDIM then
+		return Buffers.ReadUDim(r)
+	elseif typeId == TYPE_UDIM2 then
+		return Buffers.ReadUDim2(r)
+	elseif typeId == TYPE_REGION3 then
+		return Buffers.ReadRegion3(r)
+	elseif typeId == TYPE_INSTANCE then
+		return Buffers.ReadInstance(r)
+	elseif typeId == TYPE_ENUM then
+		return Buffers.ReadEnum(r)
+	elseif typeId == TYPE_BRICKCOLOR then
+		return Buffers.ReadBrickColor(r)
+	elseif typeId == TYPE_TWEENINFO then
+		return Buffers.ReadTweenInfo(r)
 	elseif typeId == TYPE_TABLE then
-		local t = {}
+		local t: { [any]: any } = {}
+		r.refCount += 1
+		r.refs[r.refCount] = t
 		while true do
 			local k = Buffers.ReadAny(r)
-			if k == nil then break end
-			local v = Buffers.ReadAny(r)
-			t[k] = v
+			if k == nil then
+				break
+			end
+			local val = Buffers.ReadAny(r)
+			t[k] = val
 		end
 		return t
-	elseif typeId == TYPE_INT_U8 then return Buffers.ReadU8(r)
-	elseif typeId == TYPE_INT_U16 then return Buffers.ReadU16(r)
-	elseif typeId == TYPE_INT_U32 then return Buffers.ReadU32(r)
-	elseif typeId == TYPE_INT_I16 then return Buffers.ReadI16(r)
-	elseif typeId == TYPE_INT_I32 then return Buffers.ReadI32(r)
+	elseif typeId == TYPE_ARRAY then
+		local len = Buffers.ReadVarInt(r)
+		local t = table.create(len)
+		r.refCount += 1
+		r.refs[r.refCount] = t
+		for i = 1, len do
+			t[i] = Buffers.ReadAny(r)
+		end
+		return t
+	elseif typeId == TYPE_REF then
+		local ref = Buffers.ReadVarInt(r)
+		return (r.refs[ref] :: any)
+	elseif typeId == TYPE_INT_U8 then
+		return Buffers.ReadU8(r)
+	elseif typeId == TYPE_INT_U16 then
+		return Buffers.ReadU16(r)
+	elseif typeId == TYPE_INT_U32 then
+		return Buffers.ReadU32(r)
+	elseif typeId == TYPE_INT_I16 then
+		return Buffers.ReadI16(r)
+	elseif typeId == TYPE_INT_I32 then
+		return Buffers.ReadI32(r)
 	end
 
 	return nil
@@ -613,7 +799,7 @@ function Buffers.Pack(w: Writer, ...)
 	end
 end
 
-function Buffers.Unpack(r: Reader): {any}
+function Buffers.Unpack(r: Reader): { any }
 	local n = Buffers.ReadVarInt(r)
 	local t = t_create(n)
 	for i = 1, n do
