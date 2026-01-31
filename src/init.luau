@@ -14,6 +14,7 @@ export type Server<Args... = (...any), Out... = (...any)> = {
 	FireUnreliable: (self: Server<Args..., Out...>, player: Player, Args...) -> (),
 	FireAll: (self: Server<Args..., Out...>, Args...) -> (),
 	FireAllUnreliable: (self: Server<Args..., Out...>, Args...) -> (),
+	Invoke: (self: Server<Args..., Out...>, player: Player, Args...) -> Out...,
 	Connect: (self: Server<Args..., Out...>, callback: (player: Player, Args...) -> ()) -> { Disconnect: () -> () },
 	Once: (self: Server<Args..., Out...>, callback: (player: Player, Args...) -> ()) -> (),
 	Wait: (self: Server<Args..., Out...>) -> (Player, Args...),
@@ -27,6 +28,7 @@ export type Client<Args... = (...any), Out... = (...any)> = {
 	Connect: (self: Client<Args..., Out...>, callback: (Args...) -> ()) -> { Disconnect: () -> () },
 	Once: (self: Client<Args..., Out...>, callback: (Args...) -> ()) -> (),
 	Wait: (self: Client<Args..., Out...>) -> Args...,
+	OnInvoke: ((Args...) -> Out...)?,
 }
 
 function Jolt.Server<Args..., Out...>(name: string): Server<Args..., Out...>
@@ -44,5 +46,4 @@ function Jolt.Client<Args..., Out...>(name: string): Client<Args..., Out...>
 
 	return Client.new(name) :: any
 end
-
 return Jolt
