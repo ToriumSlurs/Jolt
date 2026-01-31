@@ -25,11 +25,12 @@ function Remotes.Get(): RemoteGroup
 		error("Jolt remotes not found. Ensure Jolt is initialized on the server.")
 	end
 
-	_cachedGroup = {
+	local group: RemoteGroup = {
 		Reliable = reliable :: RemoteEvent,
 		Unreliable = unreliable :: UnreliableRemoteEvent,
 	}
-	return _cachedGroup :: RemoteGroup
+	_cachedGroup = group
+	return group
 end
 
 function Remotes.Create(): RemoteGroup
@@ -52,11 +53,12 @@ function Remotes.Create(): RemoteGroup
 		unreliable.Parent = script
 	end
 
-	_cachedGroup = {
+	local group: RemoteGroup = {
 		Reliable = reliable :: RemoteEvent,
 		Unreliable = unreliable :: UnreliableRemoteEvent,
 	}
-	return _cachedGroup :: RemoteGroup
+	_cachedGroup = group
+	return group
 end
 
 return Remotes
