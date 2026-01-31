@@ -1,182 +1,190 @@
 --!strict
+--!native
+--!optimize 2
 local Server = {}
 Server.__index = Server
 
+local Players = game:GetService("Players")
+
 local Buffers = require("./Utils/Buffers")
 local Remotes = require("./Utils/Remotes")
+local Signal = require("./Utils/Signal")
 local Bridge = require("./Bridge")
 
 local PACKET_EVENT = 1
 local PACKET_REQUEST = 2
 local PACKET_RESPONSE = 3
+local REQUEST_TIMEOUT = 60
 
 local task_spawn = task.spawn
-local table_remove = table.remove
+local task_delay = task.delay
+local task_cancel = task.cancel
+local coroutine_running = coroutine.running
+local coroutine_yield = coroutine.yield
 local table_unpack = table.unpack
 
-local GlobalInitialized = false
-type Listener = {
-	__type: "Connect",
-	Callback: (Player, ...any) -> (),
-} | {
-	__type: "Once",
-	Callback: (Player, ...any) -> (),
-} | {
-	__type: "Wait",
-	Thread: thread,
+type Request = { thread: thread, timer: thread }
+
+type InternalServer = {
+	_id: string,
+	_signal: Signal.Signal,
+	_requests: { [Player]: { [number]: Request } },
+	_requestIdCounters: { [Player]: number },
+	OnInvoke: ((Player, ...any) -> ...any)?,
 }
-local Listeners = {} :: {[string]: {Listener}}
-local InvokeHandlers = {} :: {[string]: (Player, ...any) -> ...any}
+
+local ReliableConn: RBXScriptConnection?
+local UnreliableConn: RBXScriptConnection?
+local Instances: { [string]: InternalServer } = {}
 
 local reliable: RemoteEvent
 local unreliable: UnreliableRemoteEvent
 
 local function Initialize()
-	if GlobalInitialized then return end
-	GlobalInitialized = true
+	if ReliableConn and ReliableConn.Connected then
+		return
+	end
 
 	Bridge.Initialize()
 	local group = Remotes.Get()
 	reliable = group.Reliable
 	unreliable = group.Unreliable
 
-	local function dispatch(player: Player, id: string, args: {any}, count: number)
-		local type = args[1]
-		if type == PACKET_EVENT then
-			local listeners = Listeners[id]
-			if not listeners then
-				return
-			end
+	local function dispatch(player: Player, id: string, args: { any }, count: number)
+		local packetType = args[1]
+		local instance = Instances[id]
+		if not instance then
+			return
+		end
 
-			for i = #listeners, 1, -1 do
-				local listener = listeners[i]
-				if listener then
-					if listener.__type == "Connect" then
-						task_spawn(listener.Callback, player, table_unpack(args, 2, count))
-					elseif listener.__type == "Once" then
-						task_spawn(listener.Callback, player, table_unpack(args, 2, count))
-						table.remove(listeners, i)
-					elseif listener.__type == "Wait" then
-						task_spawn(listener.Thread, player, table_unpack(args, 2, count))
-						table.remove(listeners, i)
-					end
-				end
-			end
-		elseif type == PACKET_REQUEST then
+		if packetType == PACKET_EVENT then
+			instance._signal:Fire(player, table_unpack(args, 2, count))
+		elseif packetType == PACKET_REQUEST then
 			local reqId = args[2]
-			local handler = InvokeHandlers[id]
+			local handler = instance.OnInvoke
 			if handler then
 				task_spawn(function()
-					local results = {pcall(handler, player, table_unpack(args, 3, count))}
+					local results = table.pack(pcall(handler, player, table_unpack(args, 3, count)))
 					local ok = results[1]
-					table_remove(results, 1)
 
 					local w = Bridge.Writer(true, player)
 					Buffers.WriteString(w, id)
 
-					local n = #results + 2
+					local n = (if ok then results.n - 1 else 1) + 2
 					Buffers.WritePacketHeader(w, PACKET_RESPONSE, n)
 
 					Buffers.WriteAny(w, reqId)
 					Buffers.WriteAny(w, ok)
 
-					for _, v in ipairs(results) do
-						Buffers.WriteAny(w, v)
+					if ok then
+						for i = 2, results.n do
+							Buffers.WriteAny(w, results[i])
+						end
+					else
+						Buffers.WriteAny(w, results[2])
 					end
 				end)
 			end
+		elseif packetType == PACKET_RESPONSE then
+			local reqId = args[2]
+			local ok = args[3] == true or args[3] == 1
+
+			local playerRequests = instance._requests[player]
+			if playerRequests then
+				local req = playerRequests[reqId]
+				if req and coroutine.status(req.thread) ~= "dead" then
+					playerRequests[reqId] = nil
+					task_cancel(req.timer)
+					task_spawn(req.thread, ok, table_unpack(args, 4, count))
+				elseif req then
+					playerRequests[reqId] = nil
+					task_cancel(req.timer)
+				end
+			end
 		end
 	end
 
-	local function onEvent(player: Player, b: buffer, i: {Instance})
+	local function onEvent(player: Player, b: buffer, i: { Instance })
 		local r = Buffers.CreateReader(b, i)
 
-		while r.cursor < r.len do
-			local id = Buffers.ReadString(r)
+		local success, err = pcall(function()
+			while r.cursor < r.len do
+				local id = Buffers.ReadString(r)
+				local packetType, argCount = Buffers.ReadPacketHeader(r)
 
-			local type, argCount = Buffers.ReadPacketHeader(r)
+				local args = table.create(argCount + 1)
+				args[1] = packetType
+				for k = 1, argCount do
+					args[k + 1] = Buffers.ReadAny(r)
+				end
 
-			local args = table.create(argCount + 1)
-			args[1] = type
-			for k = 1, argCount do
-				args[k + 1] = Buffers.ReadAny(r)
+				dispatch(player, id, args, argCount + 1)
 			end
-
-			dispatch(player, id, args, argCount + 1)
-		end
+		end)
 
 		Buffers.FreeReader(r)
+
+		if not success then
+			warn("Jolt: Error processing network packet from " .. player.Name .. ": " .. tostring(err))
+		end
 	end
 
-	reliable.OnServerEvent:Connect(onEvent)
-	unreliable.OnServerEvent:Connect(onEvent)
+	ReliableConn = reliable.OnServerEvent:Connect(onEvent)
+	UnreliableConn = unreliable.OnServerEvent:Connect(onEvent)
+
+	Players.PlayerRemoving:Connect(function(player)
+		for _, instance in pairs(Instances) do
+			instance._requests[player] = nil
+			instance._requestIdCounters[player] = nil
+		end
+	end)
 end
 
-function Server.new(name: string)
-	if not GlobalInitialized then
+function Server.new(name: string): any
+	if not ReliableConn or not ReliableConn.Connected then
 		Initialize()
 	end
 
-	local self = setmetatable({}, Server)
-	self._id = name
+	if Instances[name] then
+		return Instances[name]
+	end
 
+	local self = setmetatable({
+		_id = name,
+		_signal = Signal.new(),
+		_requests = {},
+		_requestIdCounters = {},
+		OnInvoke = nil,
+	}, Server)
+
+	Instances[name] = self :: any
 	return self
 end
 
 function Server:Connect(callback: (Player, ...any) -> ())
-	if not Listeners[self._id] then
-		Listeners[self._id] = {}
+	if typeof(self) ~= "table" or not (self :: any)._id then
+		error("Jolt: Server method must be called with ':' (e.g., event:Connect(callback))", 2)
 	end
-
-	local newListener: Listener = {
-		__type = "Connect",
-		Callback = callback,
-	}
-	table.insert(Listeners[self._id], newListener)
-
-	return {
-		Disconnect = function()
-			if not Listeners[self._id] then
-				return
-			end
-			for i, listener in ipairs(Listeners[self._id]) do
-				if listener == newListener then
-					table.remove(Listeners[self._id], i)
-					break
-				end
-			end
-		end,
-	}
+	return (self :: any)._signal:Connect(callback)
 end
 
 function Server:Once(callback: (Player, ...any) -> ())
-	if not Listeners[self._id] then
-		Listeners[self._id] = {}
+	if typeof(self) ~= "table" or not (self :: any)._id then
+		error("Jolt: Server method must be called with ':' (e.g., event:Once(callback))", 2)
 	end
-
-	table.insert(Listeners[self._id], ({
-		__type = "Once",
-		Callback = callback,
-	} :: Listener))
+	return (self :: any)._signal:Once(callback)
 end
 
 function Server:Wait()
-	if not Listeners[self._id] then
-		Listeners[self._id] = {}
+	if typeof(self) ~= "table" or not (self :: any)._id then
+		error("Jolt: Server method must be called with ':' (e.g., event:Wait())", 2)
 	end
-
-	local thread = coroutine.running()
-	table.insert(Listeners[self._id], ({
-		__type = "Wait",
-		Thread = thread,
-	} :: Listener))
-
-	return coroutine.yield()
+	return (self :: any)._signal:Wait()
 end
 
-local function Send(self: any, reliable: boolean, player: Player?, packetType: number, ...: any)
-	local id = self._id
-	local w = Bridge.Writer(reliable, player)
+local function Send(internal: InternalServer, isReliable: boolean, player: Player?, packetType: number, ...: any)
+	local id = internal._id
+	local w = Bridge.Writer(isReliable, player)
 
 	Buffers.WriteString(w, id)
 
@@ -189,27 +197,72 @@ local function Send(self: any, reliable: boolean, player: Player?, packetType: n
 end
 
 function Server:Fire(player: Player, ...: any)
-	Send(self, true, player, PACKET_EVENT, ...)
+	if typeof(self) ~= "table" or not (self :: any)._id then
+		error("Jolt: Server method must be called with ':' (e.g., event:Fire(player, ...))", 2)
+	end
+	Send(self :: any, true, player, PACKET_EVENT, ...)
 end
 
 function Server:FireUnreliable(player: Player, ...: any)
-	Send(self, false, player, PACKET_EVENT, ...)
+	if typeof(self) ~= "table" or not (self :: any)._id then
+		error("Jolt: Server method must be called with ':' (e.g., event:FireUnreliable(player, ...))", 2)
+	end
+	Send(self :: any, false, player, PACKET_EVENT, ...)
 end
 
 function Server:FireAll(...: any)
-	Send(self, true, nil, PACKET_EVENT, ...)
+	if typeof(self) ~= "table" or not (self :: any)._id then
+		error("Jolt: Server method must be called with ':' (e.g., event:FireAll(...))", 2)
+	end
+	Send(self :: any, true, nil, PACKET_EVENT, ...)
 end
 
 function Server:FireAllUnreliable(...: any)
-	Send(self, false, nil, PACKET_EVENT, ...)
+	if typeof(self) ~= "table" or not (self :: any)._id then
+		error("Jolt: Server method must be called with ':' (e.g., event:FireAllUnreliable(...))", 2)
+	end
+	Send(self :: any, false, nil, PACKET_EVENT, ...)
 end
 
-function Server:__newindex(k, v)
-	if k == "OnInvoke" then
-		InvokeHandlers[self._id] = v
-	else
-		rawset(self, k, v)
+function Server:Invoke(player: Player, ...: any)
+	if typeof(self) ~= "table" or not (self :: any)._id then
+		error("Jolt: Server method must be called with ':' (e.g., event:Invoke(player, ...))", 2)
 	end
+	local internal: InternalServer = self :: any
+	if not internal._requests[player] then
+		internal._requests[player] = {}
+		internal._requestIdCounters[player] = 0
+	end
+
+	local reqId = internal._requestIdCounters[player]
+	internal._requestIdCounters[player] += 1
+
+	Send(internal, true, player, PACKET_REQUEST, reqId, ...)
+
+	local thread = coroutine_running()
+	local timer = task_delay(REQUEST_TIMEOUT, function()
+		if
+			internal._requests[player]
+			and internal._requests[player][reqId]
+			and internal._requests[player][reqId].thread == thread
+		then
+			internal._requests[player][reqId] = nil
+			if coroutine.status(thread) ~= "dead" then
+				task_spawn(thread, false, "Request timed out")
+			end
+		end
+	end)
+
+	internal._requests[player][reqId] = { thread = thread, timer = timer }
+
+	local results = table.pack(coroutine_yield())
+	local success = results[1]
+
+	if not success then
+		error(tostring(results[2]))
+	end
+
+	return table_unpack(results, 2, results.n)
 end
 
 return Server
