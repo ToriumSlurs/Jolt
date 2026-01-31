@@ -26,7 +26,7 @@ If you're interested in helping out or just want to use a maintained, high-perfo
 
 * **⚡ Blazing Fast:** Zero-allocation packet handling via buffer serialization.
 * **🔒 Type Safe:** Full Luau type checking and autocomplete support.
-* **📦 Compact:** Automatic data compression.
+* **📦 Compact:** Automatic data compression and circular table support.
 * **🔄 Hybrid Networking:** Every event supports both reliable and unreliable messaging out of the box.
 * **🧘 Developer Friendly:** Simple, declarative syntax that gets out of your way.
 
@@ -71,6 +71,37 @@ MyEvent:Fire("Hello from the client!")
 -- Invoke the server
 local response = MyEvent:Invoke()
 print(response) -- "Hello, Player1!"
+```
+
+### Server-to-Client Invocations
+Jolt supports full round-trip invocations.
+
+```lua
+-- Server
+local MyInvoke = Jolt.Server("MyInvoke")
+local success, response = pcall(function()
+    return MyInvoke:Invoke(player, "Requesting data")
+end)
+
+-- Client
+local MyInvoke = Jolt.Client("MyInvoke")
+MyInvoke.OnInvoke = function(data)
+    return "Processed: " .. data
+end
+```
+
+### Disconnection & Resilience
+Jolt is built to be resilient to script lifecycle changes. If a script is destroyed, its connections are **automatically cleaned up** to prevent memory leaks.
+
+However, if you need to stop listening while the script is still running, you can manually disconnect:
+
+```lua
+local connection = MyEvent:Connect(function(...)
+    print("Received event!")
+end)
+
+-- Stop listening manually
+connection:Disconnect()
 ```
 
 ### With Generics
