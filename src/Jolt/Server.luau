@@ -25,6 +25,18 @@ local table_unpack = table.unpack
 
 type Request = { thread: thread, timer: thread }
 
+export type Server<Args... = (...any), Out... = (...any)> = {
+	Fire: (self: Server<Args..., Out...>, player: Player, Args...) -> (),
+	FireUnreliable: (self: Server<Args..., Out...>, player: Player, Args...) -> (),
+	FireAll: (self: Server<Args..., Out...>, Args...) -> (),
+	FireAllUnreliable: (self: Server<Args..., Out...>, Args...) -> (),
+	Invoke: (self: Server<Args..., Out...>, player: Player, Args...) -> Out...,
+	Connect: (self: Server<Args..., Out...>, callback: (player: Player, Args...) -> ()) -> { Disconnect: () -> () },
+	Once: (self: Server<Args..., Out...>, callback: (player: Player, Args...) -> ()) -> (),
+	Wait: (self: Server<Args..., Out...>) -> (Player, Args...),
+	OnServerInvoke: ((player: Player, Args...) -> Out...)?,
+}
+
 type InternalServer = {
 	_id: string,
 	_signal: Signal.Signal,
@@ -120,6 +132,7 @@ local function Initialize()
 
 				dispatch(player, id, args, argCount + 1)
 			end
+			return true
 		end)
 
 		Buffers.FreeReader(r)
@@ -162,21 +175,21 @@ function Server.new(name: string): any
 end
 
 function Server:Connect(callback: (Player, ...any) -> ())
-	if typeof(self) ~= "table" or not (self :: any)._id then
+	if not (self :: any)._id then
 		error("Jolt: Server method must be called with ':' (e.g., event:Connect(callback))", 2)
 	end
 	return (self :: any)._signal:Connect(callback)
 end
 
 function Server:Once(callback: (Player, ...any) -> ())
-	if typeof(self) ~= "table" or not (self :: any)._id then
+	if not (self :: any)._id then
 		error("Jolt: Server method must be called with ':' (e.g., event:Once(callback))", 2)
 	end
 	return (self :: any)._signal:Once(callback)
 end
 
 function Server:Wait()
-	if typeof(self) ~= "table" or not (self :: any)._id then
+	if not (self :: any)._id then
 		error("Jolt: Server method must be called with ':' (e.g., event:Wait())", 2)
 	end
 	return (self :: any)._signal:Wait()
@@ -197,35 +210,35 @@ local function Send(internal: InternalServer, isReliable: boolean, player: Playe
 end
 
 function Server:Fire(player: Player, ...: any)
-	if typeof(self) ~= "table" or not (self :: any)._id then
+	if not (self :: any)._id then
 		error("Jolt: Server method must be called with ':' (e.g., event:Fire(player, ...))", 2)
 	end
 	Send(self :: any, true, player, PACKET_EVENT, ...)
 end
 
 function Server:FireUnreliable(player: Player, ...: any)
-	if typeof(self) ~= "table" or not (self :: any)._id then
+	if not (self :: any)._id then
 		error("Jolt: Server method must be called with ':' (e.g., event:FireUnreliable(player, ...))", 2)
 	end
 	Send(self :: any, false, player, PACKET_EVENT, ...)
 end
 
 function Server:FireAll(...: any)
-	if typeof(self) ~= "table" or not (self :: any)._id then
+	if not (self :: any)._id then
 		error("Jolt: Server method must be called with ':' (e.g., event:FireAll(...))", 2)
 	end
 	Send(self :: any, true, nil, PACKET_EVENT, ...)
 end
 
 function Server:FireAllUnreliable(...: any)
-	if typeof(self) ~= "table" or not (self :: any)._id then
+	if not (self :: any)._id then
 		error("Jolt: Server method must be called with ':' (e.g., event:FireAllUnreliable(...))", 2)
 	end
 	Send(self :: any, false, nil, PACKET_EVENT, ...)
 end
 
 function Server:Invoke(player: Player, ...: any)
-	if typeof(self) ~= "table" or not (self :: any)._id then
+	if not (self :: any)._id then
 		error("Jolt: Server method must be called with ':' (e.g., event:Invoke(player, ...))", 2)
 	end
 	local internal: InternalServer = self :: any

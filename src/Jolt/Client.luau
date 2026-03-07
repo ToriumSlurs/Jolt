@@ -23,6 +23,16 @@ local table_unpack = table.unpack
 
 type Request = { thread: thread, timer: thread }
 
+export type Client<Args... = (...any), Out... = (...any)> = {
+	Fire: (self: Client<Args..., Out...>, Args...) -> (),
+	FireUnreliable: (self: Client<Args..., Out...>, Args...) -> (),
+	Invoke: (self: Client<Args..., Out...>, Args...) -> Out...,
+	Connect: (self: Client<Args..., Out...>, callback: (Args...) -> ()) -> { Disconnect: () -> () },
+	Once: (self: Client<Args..., Out...>, callback: (Args...) -> ()) -> (),
+	Wait: (self: Client<Args..., Out...>) -> Args...,
+	OnInvoke: ((Args...) -> Out...)?,
+}
+
 type InternalClient = {
 	_id: string,
 	_signal: Signal.Signal,
@@ -115,6 +125,7 @@ local function Initialize()
 
 				dispatch(id, args, argCount + 1)
 			end
+			return true
 		end)
 
 		Buffers.FreeReader(r)
@@ -134,37 +145,37 @@ function Client.new(name: string): any
 	end
 
 	if Instances[name] then
-		return Instances[name]
+		return Instances[name] :: Client<(...any), (...any)>
 	end
 
-	local self = setmetatable({
+	local self: InternalClient = setmetatable({
 		_id = name,
 		_signal = Signal.new(),
 		_requests = {},
 		_requestIdCounter = 0,
-		OnInvoke = nil,
+		OnInvoke = nil :: ((...any) -> ...any)?,
 	}, Client)
 
-	Instances[name] = self :: any
+	Instances[name] = self
 	return self
 end
 
 function Client:Connect(callback: (...any) -> ())
-	if typeof(self) ~= "table" or not (self :: any)._id then
+	if not (self :: any)._id then
 		error("Jolt: Client method must be called with ':' (e.g., event:Connect(callback))", 2)
 	end
 	return (self :: any)._signal:Connect(callback)
 end
 
 function Client:Once(callback: (...any) -> ())
-	if typeof(self) ~= "table" or not (self :: any)._id then
+	if not (self :: any)._id then
 		error("Jolt: Client method must be called with ':' (e.g., event:Once(callback))", 2)
 	end
 	return (self :: any)._signal:Once(callback)
 end
 
 function Client:Wait()
-	if typeof(self) ~= "table" or not (self :: any)._id then
+	if not (self :: any)._id then
 		error("Jolt: Client method must be called with ':' (e.g., event:Wait())", 2)
 	end
 	return (self :: any)._signal:Wait()
@@ -185,21 +196,21 @@ local function Send(internal: InternalClient, isReliable: boolean, packetType: n
 end
 
 function Client:Fire(...: any)
-	if typeof(self) ~= "table" or not (self :: any)._id then
+	if not (self :: any)._id then
 		error("Jolt: Client method must be called with ':' (e.g., event:Fire(...))", 2)
 	end
 	Send(self :: any, true, PACKET_EVENT, ...)
 end
 
 function Client:FireUnreliable(...: any)
-	if typeof(self) ~= "table" or not (self :: any)._id then
+	if not (self :: any)._id then
 		error("Jolt: Client method must be called with ':' (e.g., event:FireUnreliable(...))", 2)
 	end
 	Send(self :: any, false, PACKET_EVENT, ...)
 end
 
 function Client:Invoke(...: any)
-	if typeof(self) ~= "table" or not (self :: any)._id then
+	if not (self :: any)._id then
 		error("Jolt: Client method must be called with ':' (e.g., event:Invoke(...))", 2)
 	end
 	local internal: InternalClient = self :: any
