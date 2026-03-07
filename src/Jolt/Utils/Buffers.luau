@@ -3,6 +3,8 @@
 --!optimize 2
 local Buffers = {}
 
+local m_floor = math.floor
+local m_round = math.round
 local b_create = buffer.create
 local b_len = buffer.len
 local b_copy = buffer.copy
@@ -436,9 +438,9 @@ function Buffers.ReadCFrame(r: Reader): CFrame
 end
 
 function Buffers.WriteColor3(w: Writer, v: Color3)
-	Buffers.WriteU8(w, math.round(v.R * 255))
-	Buffers.WriteU8(w, math.round(v.G * 255))
-	Buffers.WriteU8(w, math.round(v.B * 255))
+	Buffers.WriteU8(w, m_round(v.R * 255))
+	Buffers.WriteU8(w, m_round(v.G * 255))
+	Buffers.WriteU8(w, m_round(v.B * 255))
 end
 
 function Buffers.ReadColor3(r: Reader): Color3
@@ -574,7 +576,7 @@ local function isPureArray(t: { any }): boolean
 end
 
 function Buffers.WriteAny(w: Writer, v: any)
-	local t = typeof(v)
+	local t = type(v)
 
 	if t == "nil" then
 		Buffers.WriteU8(w, TYPE_NIL)
@@ -582,15 +584,15 @@ function Buffers.WriteAny(w: Writer, v: any)
 		Buffers.WriteU8(w, TYPE_BOOL)
 		Buffers.WriteBool(w, v)
 	elseif t == "number" then
-		if v % 1 == 0 then
+		if v == m_floor(v) then
 			if v >= 0 then
-				if v <= 255 then
+				if v < 256 then
 					Buffers.WriteU8(w, TYPE_INT_U8)
 					Buffers.WriteU8(w, v)
-				elseif v <= 65535 then
+				elseif v < 65536 then
 					Buffers.WriteU8(w, TYPE_INT_U16)
 					Buffers.WriteU16(w, v)
-				elseif v <= 4294967295 then
+				elseif v < 4294967296 then
 					Buffers.WriteU8(w, TYPE_INT_U32)
 					Buffers.WriteU32(w, v)
 				else
@@ -633,67 +635,77 @@ function Buffers.WriteAny(w: Writer, v: any)
 	elseif t == "buffer" then
 		Buffers.WriteU8(w, TYPE_BUFFER)
 		Buffers.WriteBuffer(w, v)
-	elseif t == "Vector2" then
-		Buffers.WriteU8(w, TYPE_VECTOR2)
-		Buffers.WriteVector2(w, v)
-	elseif t == "Vector3" then
+	elseif t == "vector" then
+		-- Vector3 is recognized as vector, fun fact
 		Buffers.WriteU8(w, TYPE_VECTOR3)
 		Buffers.WriteVector3(w, v)
-	elseif t == "CFrame" then
-		Buffers.WriteU8(w, TYPE_CFRAME)
-		Buffers.WriteCFrame(w, v)
-	elseif t == "Color3" then
-		Buffers.WriteU8(w, TYPE_COLOR3)
-		Buffers.WriteColor3(w, v)
-	elseif t == "UDim" then
-		Buffers.WriteU8(w, TYPE_UDIM)
-		Buffers.WriteUDim(w, v)
-	elseif t == "UDim2" then
-		Buffers.WriteU8(w, TYPE_UDIM2)
-		Buffers.WriteUDim2(w, v)
-	elseif t == "Region3" then
-		Buffers.WriteU8(w, TYPE_REGION3)
-		Buffers.WriteRegion3(w, v)
-	elseif t == "Instance" then
-		Buffers.WriteU8(w, TYPE_INSTANCE)
-		Buffers.WriteInstance(w, v)
-	elseif t == "EnumItem" then
-		Buffers.WriteU8(w, TYPE_ENUM)
-		Buffers.WriteEnum(w, v)
-	elseif t == "BrickColor" then
-		Buffers.WriteU8(w, TYPE_BRICKCOLOR)
-		Buffers.WriteBrickColor(w, v)
-	elseif t == "TweenInfo" then
-		Buffers.WriteU8(w, TYPE_TWEENINFO)
-		Buffers.WriteTweenInfo(w, v)
 	elseif t == "table" then
 		local ref = w.refs[v]
 		if ref then
 			Buffers.WriteU8(w, TYPE_REF)
 			Buffers.WriteVarInt(w, ref)
-		elseif isPureArray(v) then
-			w.refCount += 1
-			w.refs[v] = w.refCount
-			Buffers.WriteU8(w, TYPE_ARRAY)
-			local len = #v
-			Buffers.WriteVarInt(w, len)
-			for i = 1, len do
-				Buffers.WriteAny(w, v[i])
-			end
 		else
-			w.refCount += 1
-			w.refs[v] = w.refCount
-			Buffers.WriteU8(w, TYPE_TABLE)
-			for k, val in pairs(v) do
-				Buffers.WriteAny(w, k)
-				Buffers.WriteAny(w, val)
+			local len = #v
+			if len > 0 and next(v, len) == nil then
+				w.refCount += 1
+				w.refs[v] = w.refCount
+				Buffers.WriteU8(w, TYPE_ARRAY)
+				Buffers.WriteVarInt(w, len)
+				for i = 1, len do
+					Buffers.WriteAny(w, v[i])
+				end
+			else
+				w.refCount += 1
+				w.refs[v] = w.refCount
+				Buffers.WriteU8(w, TYPE_TABLE)
+				for k, val in pairs(v) do
+					Buffers.WriteAny(w, k)
+					Buffers.WriteAny(w, val)
+				end
+				Buffers.WriteU8(w, TYPE_NIL)
 			end
-			Buffers.WriteU8(w, TYPE_NIL)
 		end
 	else
-		Buffers.WriteU8(w, TYPE_NIL)
+		-- edge cases where typeof is needed
+		local typeof_t = typeof(v)
+
+		if typeof_t == "Vector2" then
+			Buffers.WriteU8(w, TYPE_VECTOR2)
+			Buffers.WriteVector2(w, v)
+		elseif typeof_t == "CFrame" then
+			Buffers.WriteU8(w, TYPE_CFRAME)
+			Buffers.WriteCFrame(w, v)
+		elseif typeof_t == "Color3" then
+			Buffers.WriteU8(w, TYPE_COLOR3)
+			Buffers.WriteColor3(w, v)
+		elseif typeof_t == "UDim" then
+			Buffers.WriteU8(w, TYPE_UDIM)
+			Buffers.WriteUDim(w, v)
+		elseif typeof_t == "UDim2" then
+			Buffers.WriteU8(w, TYPE_UDIM2)
+			Buffers.WriteUDim2(w, v)
+		elseif typeof_t == "Region3" then
+			Buffers.WriteU8(w, TYPE_REGION3)
+			Buffers.WriteRegion3(w, v)
+		elseif typeof_t == "Instance" then
+			Buffers.WriteU8(w, TYPE_INSTANCE)
+			Buffers.WriteInstance(w, v)
+		elseif typeof_t == "EnumItem" then
+			Buffers.WriteU8(w, TYPE_ENUM)
+			Buffers.WriteEnum(w, v)
+		elseif typeof_t == "BrickColor" then
+			Buffers.WriteU8(w, TYPE_BRICKCOLOR)
+			Buffers.WriteBrickColor(w, v)
+		elseif typeof_t == "TweenInfo" then
+			Buffers.WriteU8(w, TYPE_TWEENINFO)
+			Buffers.WriteTweenInfo(w, v)
+		else
+			-- uhhhhhhhhhhhhhhhhhhhh
+			Buffers.WriteU8(w, TYPE_NIL)
+		end
 	end
 end
+
 
 function Buffers.ReadAny(r: Reader): any
 	if r.cursor >= r.len then
