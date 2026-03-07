@@ -34,7 +34,7 @@ export type Server<Args... = (...any), Out... = (...any)> = {
 	Connect: (self: Server<Args..., Out...>, callback: (player: Player, Args...) -> ()) -> { Disconnect: () -> () },
 	Once: (self: Server<Args..., Out...>, callback: (player: Player, Args...) -> ()) -> (),
 	Wait: (self: Server<Args..., Out...>) -> (Player, Args...),
-	OnServerInvoke: ((player: Player, Args...) -> Out...)?,
+	OnInvoke: ((player: Player, Args...) -> Out...)?,
 }
 
 type InternalServer = {
