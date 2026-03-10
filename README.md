@@ -98,15 +98,17 @@ Jolt gives the ability to use an unified function to automatically get the corre
 ```lua
 -- Server
 local MyEvent = Jolt.ReferenceBridge("MyEvent") -- Gives the Server environment
-local success, response = pcall(function()
-    print("Hello world from server!")
+MyEvent:Connect(function(Player: Player, Data: string)
+    print(Data) -- "Jolt from the client !"
 end)
+MyEvent:Fire(Player, "Jolt unified!")
 
 -- Client
 local MyEvent = Jolt.ReferenceBridge("MyEvent") -- Gives the Client environment
-MyInvoke:Connect(function(data)
-    print("Hello world from client!")
+MyEvent:Connect(function(data)
+    print(Data) -- "Jolt unified!"
 end)
+MyEvent:Fire("Jolt from the client !") -- returns nil
 ```
 
 ### Disconnection & Resilience
