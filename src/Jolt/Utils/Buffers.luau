@@ -636,7 +636,6 @@ function Buffers.WriteAny(w: Writer, v: any)
 		Buffers.WriteU8(w, TYPE_BUFFER)
 		Buffers.WriteBuffer(w, v)
 	elseif t == "vector" then
-		-- Vector3 is recognized as vector, fun fact
 		Buffers.WriteU8(w, TYPE_VECTOR3)
 		Buffers.WriteVector3(w, v)
 	elseif t == "table" then
@@ -666,7 +665,6 @@ function Buffers.WriteAny(w: Writer, v: any)
 			end
 		end
 	else
-		-- edge cases where typeof is needed
 		local typeof_t = typeof(v)
 
 		if typeof_t == "Vector2" then
@@ -700,7 +698,6 @@ function Buffers.WriteAny(w: Writer, v: any)
 			Buffers.WriteU8(w, TYPE_TWEENINFO)
 			Buffers.WriteTweenInfo(w, v)
 		else
-			-- uhhhhhhhhhhhhhhhhhhhh
 			Buffers.WriteU8(w, TYPE_NIL)
 		end
 	end
