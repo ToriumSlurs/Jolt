@@ -92,6 +92,7 @@ end
 
 ### Unified Invocations
 Jolt gives the ability to use an unified function to automatically get the correct environment
+
 *(can be used in things such as `ModuleScript`(s) for example)*
 
 ```lua
