@@ -97,13 +97,13 @@ Jolt gives the ability to use an unified function to automatically get the corre
 
 ```lua
 -- Server
-local MyEvent = Jolt.ReferenceBridge("MyInvoke") -- Gives the Server environment
+local MyEvent = Jolt.ReferenceBridge("MyEvent") -- Gives the Server environment
 local success, response = pcall(function()
     print("Hello world from server!")
 end)
 
 -- Client
-local MyEvent = Jolt.ReferenceBridge("MyInvoke") -- Gives the Client environment
+local MyEvent = Jolt.ReferenceBridge("MyEvent") -- Gives the Client environment
 MyInvoke:Connect(function(data)
     print("Hello world from client!")
 end)
