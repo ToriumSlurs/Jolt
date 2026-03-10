@@ -90,6 +90,24 @@ MyInvoke.OnInvoke = function(data)
 end
 ```
 
+### Unified Invocations
+Jolt gives the ability to use an unified function to automatically get the correct environment
+*(can be used in things such as `ModuleScript`(s) for example)*
+
+```lua
+-- Server
+local MyEvent = Jolt.ReferenceBridge("MyInvoke") -- Gives the Server environment
+local success, response = pcall(function()
+    print("Hello world from server!")
+end)
+
+-- Client
+local MyEvent = Jolt.ReferenceBridge("MyInvoke") -- Gives the Client environment
+MyInvoke:Connect(function(data)
+    print("Hello world from client!")
+end)
+```
+
 ### Disconnection & Resilience
 Jolt is built to be resilient to script lifecycle changes. If a script is destroyed, its connections are **automatically cleaned up** to prevent memory leaks.
 
