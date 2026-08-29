@@ -1,4 +1,4 @@
-# Jolt
+﻿# Jolt
 
 Networking library for Roblox that serializes data into binary buffers and batches transmissions per frame.
 
@@ -19,7 +19,7 @@ Networking library for Roblox that serializes data into binary buffers and batch
 ### Wally
 ```toml
 [dependencies]
-Jolt = "toriumslurs/jolt@4.1.0"
+Jolt = "toriumslurs/jolt@4.2.0"
 ```
 
 ### Manual

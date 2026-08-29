@@ -39,6 +39,23 @@ function Packet.ReadArguments(reader: Buffers.Reader, argumentCount: number): ..
 			Buffers_ReadAny(reader),
 			Buffers_ReadAny(reader),
 			Buffers_ReadAny(reader)
+	elseif argumentCount == 7 then
+		return Buffers_ReadAny(reader),
+			Buffers_ReadAny(reader),
+			Buffers_ReadAny(reader),
+			Buffers_ReadAny(reader),
+			Buffers_ReadAny(reader),
+			Buffers_ReadAny(reader),
+			Buffers_ReadAny(reader)
+	elseif argumentCount == 8 then
+		return Buffers_ReadAny(reader),
+			Buffers_ReadAny(reader),
+			Buffers_ReadAny(reader),
+			Buffers_ReadAny(reader),
+			Buffers_ReadAny(reader),
+			Buffers_ReadAny(reader),
+			Buffers_ReadAny(reader),
+			Buffers_ReadAny(reader)
 	end
 
 	local clampedCount = if argumentCount > MAX_PACKET_ARGUMENTS then MAX_PACKET_ARGUMENTS else argumentCount
@@ -87,9 +104,29 @@ function Packet.WriteArguments(writer: Buffers.Writer, argumentCount: number, ..
 		Buffers_WriteAny(writer, argumentD, 0)
 		Buffers_WriteAny(writer, argumentE, 0)
 		Buffers_WriteAny(writer, argumentF, 0)
-	elseif argumentCount > 6 then
+	elseif argumentCount == 7 then
+		local argumentA, argumentB, argumentC, argumentD, argumentE, argumentF, argumentG = ...
+		Buffers_WriteAny(writer, argumentA, 0)
+		Buffers_WriteAny(writer, argumentB, 0)
+		Buffers_WriteAny(writer, argumentC, 0)
+		Buffers_WriteAny(writer, argumentD, 0)
+		Buffers_WriteAny(writer, argumentE, 0)
+		Buffers_WriteAny(writer, argumentF, 0)
+		Buffers_WriteAny(writer, argumentG, 0)
+	elseif argumentCount == 8 then
+		local argumentA, argumentB, argumentC, argumentD, argumentE, argumentF, argumentG, argumentH = ...
+		Buffers_WriteAny(writer, argumentA, 0)
+		Buffers_WriteAny(writer, argumentB, 0)
+		Buffers_WriteAny(writer, argumentC, 0)
+		Buffers_WriteAny(writer, argumentD, 0)
+		Buffers_WriteAny(writer, argumentE, 0)
+		Buffers_WriteAny(writer, argumentF, 0)
+		Buffers_WriteAny(writer, argumentG, 0)
+		Buffers_WriteAny(writer, argumentH, 0)
+	elseif argumentCount > 8 then
+		local packedArgs = table.pack(...)
 		for index = 1, argumentCount do
-			Buffers_WriteAny(writer, select(index, ...), 0)
+			Buffers_WriteAny(writer, packedArgs[index], 0)
 		end
 	end
 end

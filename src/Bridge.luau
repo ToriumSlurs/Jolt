@@ -28,6 +28,7 @@ local clientUnreliableWriter: Buffers.Writer? = nil
 local reliableRemote: RemoteEvent
 local unreliableRemote: UnreliableRemoteEvent
 local frameConnection: RBXScriptConnection?
+local playerRemovingConnection: RBXScriptConnection?
 
 local isInitializing = false
 
@@ -47,22 +48,33 @@ function Bridge.Initialize()
 	reliableRemote = remoteGroup.Reliable
 	unreliableRemote = remoteGroup.Unreliable
 	frameConnection = RunService.Heartbeat:Connect(Bridge.FlushAll)
+
+	if IS_SERVER and not playerRemovingConnection then
+		playerRemovingConnection = Players.PlayerRemoving:Connect(Bridge.FlushPlayer)
+	end
+
 	isInitializing = false
 end
 
 function Bridge.FlushPlayer(player: Player)
-	if not reliableRemote then
-		return
-	end
-
-	local writer = reliablePlayerWriters[player]
-	if writer ~= nil then
+	local relWriter = reliablePlayerWriters[player]
+	if relWriter ~= nil then
 		reliablePlayerWriters[player] = nil
-		if writer.cursor > 0 and player.Parent ~= nil and player:IsDescendantOf(Players) then
-			local packetBuffer, instances = Buffers_Finalize(writer)
+		if relWriter.cursor > 0 and reliableRemote and player.Parent ~= nil and player:IsDescendantOf(Players) then
+			local packetBuffer, instances = Buffers_Finalize(relWriter)
 			pcall(reliableRemote.FireClient, reliableRemote, player, packetBuffer, instances)
 		end
-		Buffers_FreeWriter(writer)
+		Buffers_FreeWriter(relWriter)
+	end
+
+	local unrelWriter = unreliablePlayerWriters[player]
+	if unrelWriter ~= nil then
+		unreliablePlayerWriters[player] = nil
+		if unrelWriter.cursor > 0 and unreliableRemote and player.Parent ~= nil and player:IsDescendantOf(Players) then
+			local packetBuffer, instances = Buffers_Finalize(unrelWriter)
+			pcall(unreliableRemote.FireClient, unreliableRemote, player, packetBuffer, instances)
+		end
+		Buffers_FreeWriter(unrelWriter)
 	end
 end
 

@@ -1,6 +1,6 @@
 --!strict
 --[=[
-	Jolt 4.1.0
+	Jolt 4.2.0 (Optimized & Hardened)
 	High-performance binary networking library for Roblox.
 ]=]
 
@@ -22,7 +22,9 @@ export type Server<Args... = (...any), Out... = (...any)> = {
 	FireAll: (self: Server<Args..., Out...>, Args...) -> (),
 	FireAllUnreliable: (self: Server<Args..., Out...>, Args...) -> (),
 	FireExcept: (self: Server<Args..., Out...>, exceptPlayer: Player, Args...) -> (),
+	FireExceptUnreliable: (self: Server<Args..., Out...>, exceptPlayer: Player, Args...) -> (),
 	FireList: (self: Server<Args..., Out...>, players: { Player }, Args...) -> (),
+	FireListUnreliable: (self: Server<Args..., Out...>, players: { Player }, Args...) -> (),
 	Invoke: (self: Server<Args..., Out...>, player: Player, Args...) -> Out...,
 	Connect: (self: Server<Args..., Out...>, callback: (player: Player, Args...) -> ()) -> Connection,
 	Once: (self: Server<Args..., Out...>, callback: (player: Player, Args...) -> ()) -> Connection,
@@ -43,7 +45,7 @@ export type Client<Args... = (...any), Out... = (...any)> = {
 }
 
 local Jolt = {
-	Version = "4.1.0",
+	Version = "4.2.0",
 }
 
 function Jolt.Server<Args..., Out...>(channelName: string): Server<Args..., Out...>

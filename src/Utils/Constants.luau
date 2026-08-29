@@ -2,7 +2,7 @@
 --!native
 
 local Constants = {
-	VERSION = "4.1.0",
+	VERSION = "4.2.0",
 	PACKET_EVENT = 1,
 	PACKET_REQUEST = 2,
 	PACKET_RESPONSE = 3,

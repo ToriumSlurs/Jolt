@@ -71,7 +71,9 @@ export type Server<Args... = (...any), Out... = (...any)> = {
 	FireAll: (self: Server<Args..., Out...>, Args...) -> (),
 	FireAllUnreliable: (self: Server<Args..., Out...>, Args...) -> (),
 	FireExcept: (self: Server<Args..., Out...>, exceptPlayer: Player, Args...) -> (),
+	FireExceptUnreliable: (self: Server<Args..., Out...>, exceptPlayer: Player, Args...) -> (),
 	FireList: (self: Server<Args..., Out...>, players: { Player }, Args...) -> (),
+	FireListUnreliable: (self: Server<Args..., Out...>, players: { Player }, Args...) -> (),
 	Invoke: (self: Server<Args..., Out...>, player: Player, Args...) -> Out...,
 	Destroy: (self: Server<Args..., Out...>) -> (),
 }
@@ -167,7 +169,7 @@ local function onServerNetworkEvent(player: Player, rawBuffer: buffer, instanceL
 	local reader = Buffers_CreateReader(rawBuffer, validInstances)
 	local totalLength = reader.len
 
-	local parseSuccess, parseError = pcall(function()
+	pcall(function()
 		while reader.cursor < totalLength do
 			local channelHash, packetType, argumentCount = Buffers.ReadEventHeader(reader)
 
@@ -400,10 +402,65 @@ function Server:FireList(players: { Player }, ...: any)
 	Buffers.FreeWriter(tempWriter)
 end
 
+function Server:FireListUnreliable(players: { Player }, ...: any)
+	local numPlayers = #players
+	if numPlayers == 0 then
+		return
+	end
+	if numPlayers == 1 then
+		self:FireUnreliable(players[1], ...)
+		return
+	end
+
+	local tempWriter = Buffers.CreateWriter()
+	Packet_WriteEvent(tempWriter, self._hash, PACKET_EVENT, ...)
+
+	local packetLength = tempWriter.cursor
+	local tempBuffer = tempWriter.buff
+	local instanceList = if #tempWriter.insts > 0 then tempWriter.insts else nil
+
+	for _, player in players do
+		if player.Parent ~= nil and player:IsDescendantOf(Players) then
+			local writer = Bridge_Writer(false, player)
+			local cursor = writer.cursor
+			if cursor + packetLength > writer.len then
+				local capacity = math_max(writer.len, 64)
+				local targetCapacity = cursor + packetLength
+				while targetCapacity > capacity do
+					capacity *= 2
+				end
+				local newBuffer = buffer.create(capacity)
+				buffer.copy(newBuffer, 0, writer.buff, 0, cursor)
+				writer.buff = newBuffer
+				writer.len = capacity
+			end
+
+			buffer.copy(writer.buff, cursor, tempBuffer, 0, packetLength)
+			writer.cursor = cursor + packetLength
+
+			if instanceList ~= nil then
+				for _, instanceItem in instanceList do
+					table.insert(writer.insts, instanceItem)
+				end
+			end
+		end
+	end
+
+	Buffers.FreeWriter(tempWriter)
+end
+
 function Server:FireExcept(exceptPlayer: Player, ...: any)
 	for _, player in Players:GetPlayers() do
 		if player ~= exceptPlayer then
 			self:Fire(player, ...)
+		end
+	end
+end
+
+function Server:FireExceptUnreliable(exceptPlayer: Player, ...: any)
+	for _, player in Players:GetPlayers() do
+		if player ~= exceptPlayer then
+			self:FireUnreliable(player, ...)
 		end
 	end
 end

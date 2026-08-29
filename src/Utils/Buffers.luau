@@ -1,7 +1,9 @@
 --!strict
 --!native
 --!optimize 2
+
 local Buffers = {}
+
 local buffer_create = buffer.create
 local buffer_len = buffer.len
 local buffer_copy = buffer.copy
@@ -23,22 +25,25 @@ local buffer_readf64 = buffer.readf64
 local buffer_writef64 = buffer.writef64
 local buffer_readstring = buffer.readstring
 local buffer_writestring = buffer.writestring
+
 local bit_bor = bit32.bor
 local bit_band = bit32.band
 local bit_lshift = bit32.lshift
 local bit_rshift = bit32.rshift
+local bit_btest = bit32.btest
+
 local table_create = table.create
 local table_insert = table.insert
 local table_clear = table.clear
-local table_concat = table.concat
 
 local math_abs = math.abs
 local math_max = math.max
 local math_pi = math.pi
-local string_sub = string.sub
+
 local scratchFloatConversionBuffer = buffer_create(8)
-local recycledStringLengthsBuffer: { [number]: number } = {}
+
 local enumItemsByNameCache: { [string]: { [number]: EnumItem } } = {}
+
 local function getCachedEnumItem(enumName: string, enumValue: number): EnumItem?
 	if enumName == "" then
 		return nil
@@ -60,58 +65,30 @@ local function getCachedEnumItem(enumName: string, enumValue: number): EnumItem?
 	end
 	return itemsByValue[enumValue]
 end
-local byteToBooleanLookupTable: { [number]: { [number]: boolean } } = {}
-for byteValue = 0, 255 do
-	byteToBooleanLookupTable[byteValue] = {
-		bit_band(byteValue, 1) ~= 0,
-		bit_band(byteValue, 2) ~= 0,
-		bit_band(byteValue, 4) ~= 0,
-		bit_band(byteValue, 8) ~= 0,
-		bit_band(byteValue, 16) ~= 0,
-		bit_band(byteValue, 32) ~= 0,
-		bit_band(byteValue, 64) ~= 0,
-		bit_band(byteValue, 128) ~= 0,
-	}
-end
+
 local function writeUnsigned24(targetBuffer: buffer, offset: number, value: number)
 	buffer_writeu8(targetBuffer, offset, bit_band(value, 0xFF))
 	buffer_writeu8(targetBuffer, offset + 1, bit_band(bit_rshift(value, 8), 0xFF))
 	buffer_writeu8(targetBuffer, offset + 2, bit_band(bit_rshift(value, 16), 0xFF))
 end
+
 local function readUnsigned24(sourceBuffer: buffer, offset: number): number
 	local byteA = buffer_readu8(sourceBuffer, offset)
 	local byteB = buffer_readu8(sourceBuffer, offset + 1)
 	local byteC = buffer_readu8(sourceBuffer, offset + 2)
 	return bit_bor(byteA, bit_lshift(byteB, 8), bit_lshift(byteC, 16))
 end
+
 local function writeSigned24(targetBuffer: buffer, offset: number, value: number)
 	local unsignedValue = if value < 0 then value + 0x1000000 else value
 	writeUnsigned24(targetBuffer, offset, unsignedValue)
 end
+
 local function readSigned24(sourceBuffer: buffer, offset: number): number
 	local unsignedValue = readUnsigned24(sourceBuffer, offset)
 	return if unsignedValue >= 0x800000 then unsignedValue - 0x1000000 else unsignedValue
 end
-local function encodeFloat16(value: number): number?
-	buffer_writef32(scratchFloatConversionBuffer, 0, value)
-	local uintRepresentation = buffer_readu32(scratchFloatConversionBuffer, 0)
-	local exponent = bit_band(bit_rshift(uintRepresentation, 23), 0xFF)
-	if exponent == 0 then
-		return if bit_band(uintRepresentation, 0x7FFFFF) == 0 then bit_rshift(uintRepresentation, 16) else nil
-	end
-	if bit_band(uintRepresentation, 0x1FFF) ~= 0 then
-		return nil
-	end
-	local biasedExponent = exponent - 127 + 15
-	if biasedExponent < 1 or biasedExponent > 30 then
-		return nil
-	end
-	return bit_bor(
-		bit_band(bit_rshift(uintRepresentation, 16), 0x8000),
-		bit_lshift(biasedExponent, 10),
-		bit_rshift(bit_band(uintRepresentation, 0x7FFFFF), 13)
-	)
-end
+
 local function decodeFloat16(float16Bits: number): number
 	local exponent = bit_band(bit_rshift(float16Bits, 10), 0x1F)
 	local fraction = bit_band(float16Bits, 0x3FF)
@@ -131,38 +108,25 @@ local function decodeFloat16(float16Bits: number): number
 	buffer_writeu32(scratchFloatConversionBuffer, 0, float32Bits)
 	return buffer_readf32(scratchFloatConversionBuffer, 0)
 end
-local function encodeFloat24(value: number): number?
-	buffer_writef32(scratchFloatConversionBuffer, 0, value)
-	local uintRepresentation = buffer_readu32(scratchFloatConversionBuffer, 0)
-	if bit_band(uintRepresentation, 0xFF) ~= 0 then
-		return nil
-	end
-	return bit_bor(bit_band(bit_rshift(uintRepresentation, 8), 0xFFFFFF))
-end
+
 local function decodeFloat24(float24Bits: number): number
 	buffer_writeu32(scratchFloatConversionBuffer, 0, bit_lshift(float24Bits, 8))
 	return buffer_readf32(scratchFloatConversionBuffer, 0)
 end
-local function writeFloat16Bytes(targetBuffer: buffer, offset: number, float16Bits: number)
-	buffer_writeu8(targetBuffer, offset, bit_band(float16Bits, 0xFF))
-	buffer_writeu8(targetBuffer, offset + 1, bit_rshift(float16Bits, 8))
-end
+
 local function readFloat16Bytes(sourceBuffer: buffer, offset: number): number
 	local byteA = buffer_readu8(sourceBuffer, offset)
 	local byteB = buffer_readu8(sourceBuffer, offset + 1)
 	return bit_bor(byteA, bit_lshift(byteB, 8))
 end
-local function writeFloat24Bytes(targetBuffer: buffer, offset: number, float24Bits: number)
-	buffer_writeu8(targetBuffer, offset, bit_band(float24Bits, 0xFF))
-	buffer_writeu8(targetBuffer, offset + 1, bit_band(bit_rshift(float24Bits, 8), 0xFF))
-	buffer_writeu8(targetBuffer, offset + 2, bit_band(bit_rshift(float24Bits, 16), 0xFF))
-end
+
 local function readFloat24Bytes(sourceBuffer: buffer, offset: number): number
 	local byteA = buffer_readu8(sourceBuffer, offset)
 	local byteB = buffer_readu8(sourceBuffer, offset + 1)
 	local byteC = buffer_readu8(sourceBuffer, offset + 2)
 	return bit_bor(byteA, bit_lshift(byteB, 8), bit_lshift(byteC, 16))
 end
+
 local TAG_NIL = 0
 local TAG_FALSE = 1
 local TAG_TRUE = 2
@@ -225,26 +189,31 @@ local TAG_ARR_CF = 58
 local TAG_ARR_U8 = 59
 local TAG_ARR_U16 = 60
 local TAG_ARR_U32 = 61
-
 local TAG_MAP_STR_U8 = 63
+
 export type Writer = {
 	buff: buffer,
 	cursor: number,
 	len: number,
 	insts: { Instance },
 }
+
 export type Reader = {
 	buff: buffer,
 	cursor: number,
 	len: number,
 	insts: { Instance },
 }
+
 local WRITER_POOL: { Writer } = {}
 local READER_POOL: { Reader } = {}
 local MAX_POOL_CAPACITY = 128
 local MAX_POOLED_BUFFER_SIZE = 131072
 local INITIAL_BUFFER_CAPACITY = 4096
 local MAX_SERIALIZATION_DEPTH = 16
+
+local DUMMY_BUFFER = buffer_create(0)
+
 local function growWriterCapacity(writer: Writer, requiredBytes: number)
 	local currentCapacity = writer.len
 	if currentCapacity == 0 then
@@ -259,11 +228,13 @@ local function growWriterCapacity(writer: Writer, requiredBytes: number)
 	writer.buff = newBuffer
 	writer.len = currentCapacity
 end
+
 local function ensureCapacity(writer: Writer, requiredBytes: number)
 	if writer.cursor + requiredBytes > writer.len then
 		growWriterCapacity(writer, requiredBytes)
 	end
 end
+
 local function writeVariableInteger(writer: Writer, integerValue: number)
 	ensureCapacity(writer, 5)
 	local targetBuffer = writer.buff
@@ -276,6 +247,7 @@ local function writeVariableInteger(writer: Writer, integerValue: number)
 	buffer_writeu8(targetBuffer, cursor, integerValue)
 	writer.cursor = cursor + 1
 end
+
 local function readVariableInteger(reader: Reader): number
 	local accumulatedResult = 0
 	local bitShift = 0
@@ -294,6 +266,7 @@ local function readVariableInteger(reader: Reader): number
 	reader.cursor = cursor
 	return accumulatedResult
 end
+
 local function writeLengthPrefixedString(writer: Writer, stringValue: string)
 	local stringLength = #stringValue
 	ensureCapacity(writer, 5 + stringLength)
@@ -312,6 +285,7 @@ local function writeLengthPrefixedString(writer: Writer, stringValue: string)
 	end
 	writer.cursor = cursor + stringLength
 end
+
 local function readLengthPrefixedString(reader: Reader): string
 	local decodedLength = 0
 	local bitShift = 0
@@ -338,252 +312,39 @@ local function readLengthPrefixedString(reader: Reader): string
 	reader.cursor = cursor + decodedLength
 	return resultString
 end
-local DeserializerHandlers: { [number]: (reader: Reader) -> any } = {}
-DeserializerHandlers[TAG_ENUM_U8] = function(reader: Reader): any
-	local enumName = readLengthPrefixedString(reader)
-	local cursor = reader.cursor
-	if cursor >= reader.len then
-		return nil
-	end
-	local enumValue = buffer_readu8(reader.buff, cursor)
-	reader.cursor = cursor + 1
-	return getCachedEnumItem(enumName, enumValue)
-end
-DeserializerHandlers[TAG_ENUM] = function(reader)
-	local enumName = readLengthPrefixedString(reader)
-	local enumValue = readVariableInteger(reader)
-	return getCachedEnumItem(enumName, enumValue)
-end
-DeserializerHandlers[TAG_TWEEN] = function(reader)
-	local cursor = reader.cursor
-	if cursor + 15 > reader.len then
-		reader.cursor = reader.len
-		return TweenInfo.new()
-	end
-	reader.cursor = cursor + 15
-	local duration = buffer_readf32(reader.buff, cursor)
-	local styleValue = buffer_readu8(reader.buff, cursor + 4)
-	local directionValue = buffer_readu8(reader.buff, cursor + 5)
-	local repeatCount = buffer_readi32(reader.buff, cursor + 6)
-	local reverses = buffer_readu8(reader.buff, cursor + 10) == 1
-	local delayTime = buffer_readf32(reader.buff, cursor + 11)
-	local easingStyle: any = getCachedEnumItem("EasingStyle", styleValue) or Enum.EasingStyle.Quad
-	local easingDirection: any = getCachedEnumItem("EasingDirection", directionValue) or Enum.EasingDirection.Out
-	local isSuccess, createdTween =
-		pcall(TweenInfo.new, duration, easingStyle, easingDirection, repeatCount, reverses, delayTime)
-	return if isSuccess and createdTween then createdTween else TweenInfo.new()
-end
-DeserializerHandlers[TAG_COLOR_SEQ] = function(reader)
-	local cursor = reader.cursor
-	if cursor >= reader.len then
-		return ColorSequence.new(Color3.new(1, 1, 1))
-	end
-	local keypointCount = buffer_readu8(reader.buff, cursor)
-	cursor += 1
-	local keypointList = table_create(keypointCount) :: { ColorSequenceKeypoint }
-	for i = 1, keypointCount do
-		if cursor + 7 > reader.len then
-			break
-		end
-		local timePosition = buffer_readf32(reader.buff, cursor)
-		local colorR = buffer_readu8(reader.buff, cursor + 4)
-		local colorG = buffer_readu8(reader.buff, cursor + 5)
-		local colorB = buffer_readu8(reader.buff, cursor + 6)
-		keypointList[i] = ColorSequenceKeypoint.new(timePosition, Color3.fromRGB(colorR, colorG, colorB))
-		cursor += 7
-	end
-	reader.cursor = cursor
-	if #keypointList >= 2 then
-		local isSuccess, sequence = pcall(function()
-			return ColorSequence.new(keypointList)
-		end)
-		if isSuccess and sequence then
-			return sequence
-		end
-	end
-	return ColorSequence.new(Color3.new(1, 1, 1))
-end
-DeserializerHandlers[TAG_COLOR_SEQ_KP] = function(reader)
-	local cursor = reader.cursor
-	if cursor + 7 > reader.len then
-		reader.cursor = reader.len
-		return ColorSequenceKeypoint.new(0, Color3.new(1, 1, 1))
-	end
-	reader.cursor = cursor + 7
-	local timePosition = buffer_readf32(reader.buff, cursor)
-	local colorR = buffer_readu8(reader.buff, cursor + 4)
-	local colorG = buffer_readu8(reader.buff, cursor + 5)
-	local colorB = buffer_readu8(reader.buff, cursor + 6)
-	local isSuccess, keypoint = pcall(ColorSequenceKeypoint.new, timePosition, Color3.fromRGB(colorR, colorG, colorB))
-	return if isSuccess and keypoint then keypoint else ColorSequenceKeypoint.new(0, Color3.new(1, 1, 1))
-end
-DeserializerHandlers[TAG_NUM_RANGE] = function(reader)
-	local cursor = reader.cursor
-	if cursor + 8 > reader.len then
-		reader.cursor = reader.len
-		return NumberRange.new(0, 0)
-	end
-	reader.cursor = cursor + 8
-	local minimumValue = buffer_readf32(reader.buff, cursor)
-	local maximumValue = buffer_readf32(reader.buff, cursor + 4)
-	if minimumValue > maximumValue then
-		return NumberRange.new(maximumValue, minimumValue)
-	end
-	return NumberRange.new(minimumValue, maximumValue)
-end
-DeserializerHandlers[TAG_NUM_SEQ] = function(reader)
-	local cursor = reader.cursor
-	if cursor >= reader.len then
-		return NumberSequence.new(0)
-	end
-	local keypointCount = buffer_readu8(reader.buff, cursor)
-	cursor += 1
-	local keypointList = table_create(keypointCount) :: { NumberSequenceKeypoint }
-	for i = 1, keypointCount do
-		if cursor + 12 > reader.len then
-			break
-		end
-		local timePosition = buffer_readf32(reader.buff, cursor)
-		local value = buffer_readf32(reader.buff, cursor + 4)
-		local envelope = buffer_readf32(reader.buff, cursor + 8)
-		keypointList[i] = NumberSequenceKeypoint.new(timePosition, value, envelope)
-		cursor += 12
-	end
-	reader.cursor = cursor
-	if #keypointList >= 2 then
-		local isSuccess, sequence = pcall(function()
-			return NumberSequence.new(keypointList)
-		end)
-		if isSuccess and sequence then
-			return sequence
-		end
-	end
-	return NumberSequence.new(0)
-end
-DeserializerHandlers[TAG_NUM_SEQ_KP] = function(reader)
-	local cursor = reader.cursor
-	if cursor + 12 > reader.len then
-		reader.cursor = reader.len
-		return NumberSequenceKeypoint.new(0, 0, 0)
-	end
-	reader.cursor = cursor + 12
-	local timePosition = buffer_readf32(reader.buff, cursor)
-	local value = buffer_readf32(reader.buff, cursor + 4)
-	local envelope = buffer_readf32(reader.buff, cursor + 8)
-	local isSuccess, keypoint = pcall(NumberSequenceKeypoint.new, timePosition, value, envelope)
-	return if isSuccess and keypoint then keypoint else NumberSequenceKeypoint.new(0, 0, 0)
-end
-DeserializerHandlers[TAG_REGION3] = function(reader)
-	local cursor = reader.cursor
-	if cursor + 24 > reader.len then
-		reader.cursor = reader.len
-		return Region3.new(Vector3.zero, Vector3.zero)
-	end
-	reader.cursor = cursor + 24
-	local minPosition = Vector3.new(
-		buffer_readf32(reader.buff, cursor),
-		buffer_readf32(reader.buff, cursor + 4),
-		buffer_readf32(reader.buff, cursor + 8)
-	)
-	local maxPosition = Vector3.new(
-		buffer_readf32(reader.buff, cursor + 12),
-		buffer_readf32(reader.buff, cursor + 16),
-		buffer_readf32(reader.buff, cursor + 20)
-	)
-	return Region3.new(minPosition, maxPosition)
-end
-DeserializerHandlers[TAG_REGION3I16] = function(reader)
-	local cursor = reader.cursor
-	if cursor + 12 > reader.len then
-		reader.cursor = reader.len
-		return Region3int16.new(Vector3int16.new(), Vector3int16.new())
-	end
-	reader.cursor = cursor + 12
-	local minCoords = Vector3int16.new(
-		buffer_readi16(reader.buff, cursor),
-		buffer_readi16(reader.buff, cursor + 2),
-		buffer_readi16(reader.buff, cursor + 4)
-	)
-	local maxCoords = Vector3int16.new(
-		buffer_readi16(reader.buff, cursor + 6),
-		buffer_readi16(reader.buff, cursor + 8),
-		buffer_readi16(reader.buff, cursor + 10)
-	)
-	return Region3int16.new(minCoords, maxCoords)
-end
-DeserializerHandlers[TAG_VEC2I16] = function(reader)
-	local cursor = reader.cursor
-	if cursor + 4 > reader.len then
-		reader.cursor = reader.len
-		return Vector2int16.new()
-	end
-	reader.cursor = cursor + 4
-	return Vector2int16.new(buffer_readi16(reader.buff, cursor), buffer_readi16(reader.buff, cursor + 2))
-end
-DeserializerHandlers[TAG_VEC3I16] = function(reader)
-	local cursor = reader.cursor
-	if cursor + 6 > reader.len then
-		reader.cursor = reader.len
-		return Vector3int16.new()
-	end
-	reader.cursor = cursor + 6
-	return Vector3int16.new(
-		buffer_readi16(reader.buff, cursor),
-		buffer_readi16(reader.buff, cursor + 2),
-		buffer_readi16(reader.buff, cursor + 4)
-	)
-end
-DeserializerHandlers[TAG_RECT] = function(reader)
-	local cursor = reader.cursor
-	if cursor + 16 > reader.len then
-		reader.cursor = reader.len
-		return Rect.new(0, 0, 0, 0)
-	end
-	reader.cursor = cursor + 16
-	return Rect.new(
-		buffer_readf32(reader.buff, cursor),
-		buffer_readf32(reader.buff, cursor + 4),
-		buffer_readf32(reader.buff, cursor + 8),
-		buffer_readf32(reader.buff, cursor + 12)
-	)
-end
-DeserializerHandlers[TAG_DATETIME] = function(reader)
-	local cursor = reader.cursor
-	if cursor + 8 > reader.len then
-		reader.cursor = reader.len
-		return DateTime.fromUnixTimestampMillis(0)
-	end
-	reader.cursor = cursor + 8
-	local timestampMilliseconds = buffer_readf64(reader.buff, cursor)
-	if
-		timestampMilliseconds ~= timestampMilliseconds
-		or timestampMilliseconds < -17987443200000
-		or timestampMilliseconds > 253402300799999
-	then
-		return DateTime.fromUnixTimestampMillis(0)
-	end
-	return DateTime.fromUnixTimestampMillis(timestampMilliseconds)
-end
-DeserializerHandlers[TAG_RAY] = function(reader)
-	local cursor = reader.cursor
-	if cursor + 24 > reader.len then
-		reader.cursor = reader.len
-		return Ray.new(Vector3.zero, Vector3.zero)
-	end
-	reader.cursor = cursor + 24
-	local originPosition = Vector3.new(
-		buffer_readf32(reader.buff, cursor),
-		buffer_readf32(reader.buff, cursor + 4),
-		buffer_readf32(reader.buff, cursor + 8)
-	)
-	local directionVector = Vector3.new(
-		buffer_readf32(reader.buff, cursor + 12),
-		buffer_readf32(reader.buff, cursor + 16),
-		buffer_readf32(reader.buff, cursor + 20)
-	)
-	return Ray.new(originPosition, directionVector)
-end
+
 local function writeAnyValue(writer: Writer, targetValue: any, currentDepth: number) end
+
+local function writeVector2Array(writer: Writer, targetTable: { [any]: any }, arrayLength: number): boolean
+	for index = 1, arrayLength do
+		local item = targetTable[index]
+		if typeof(item) ~= "Vector2" then
+			return false
+		end
+	end
+	ensureCapacity(writer, 7 + arrayLength * 8)
+	local targetBuffer = writer.buff
+	local cursor = writer.cursor
+	buffer_writeu8(targetBuffer, cursor, TAG_ARR_VEC2)
+	cursor += 1
+	local remainingCount = arrayLength
+	while remainingCount >= 128 do
+		buffer_writeu8(targetBuffer, cursor, bit_bor(remainingCount, 0x80))
+		cursor += 1
+		remainingCount = bit_rshift(remainingCount, 7)
+	end
+	buffer_writeu8(targetBuffer, cursor, remainingCount)
+	cursor += 1
+	for index = 1, arrayLength do
+		local vectorItem: Vector2 = targetTable[index]
+		buffer_writef32(targetBuffer, cursor, vectorItem.X)
+		buffer_writef32(targetBuffer, cursor + 4, vectorItem.Y)
+		cursor += 8
+	end
+	writer.cursor = cursor
+	return true
+end
+
 local function writeVector3Array(writer: Writer, targetTable: { [any]: any }, arrayLength: number): boolean
 	for index = 1, arrayLength do
 		local item = targetTable[index]
@@ -604,7 +365,8 @@ local function writeVector3Array(writer: Writer, targetTable: { [any]: any }, ar
 	end
 	buffer_writeu8(targetBuffer, cursor, remainingCount)
 	cursor += 1
-	for _, vectorItem: Vector3 in targetTable do
+	for index = 1, arrayLength do
+		local vectorItem: Vector3 = targetTable[index]
 		buffer_writef32(targetBuffer, cursor, vectorItem.X)
 		buffer_writef32(targetBuffer, cursor + 4, vectorItem.Y)
 		buffer_writef32(targetBuffer, cursor + 8, vectorItem.Z)
@@ -613,6 +375,7 @@ local function writeVector3Array(writer: Writer, targetTable: { [any]: any }, ar
 	writer.cursor = cursor
 	return true
 end
+
 local function writeColor3Array(writer: Writer, targetTable: { [any]: any }, arrayLength: number): boolean
 	for index = 1, arrayLength do
 		if typeof(targetTable[index]) ~= "Color3" then
@@ -632,7 +395,8 @@ local function writeColor3Array(writer: Writer, targetTable: { [any]: any }, arr
 	end
 	buffer_writeu8(targetBuffer, cursor, remainingCount)
 	cursor += 1
-	for _, colorItem: Color3 in targetTable do
+	for index = 1, arrayLength do
+		local colorItem: Color3 = targetTable[index]
 		buffer_writeu8(targetBuffer, cursor, colorItem.R * 255 + 0.5)
 		buffer_writeu8(targetBuffer, cursor + 1, colorItem.G * 255 + 0.5)
 		buffer_writeu8(targetBuffer, cursor + 2, colorItem.B * 255 + 0.5)
@@ -641,6 +405,7 @@ local function writeColor3Array(writer: Writer, targetTable: { [any]: any }, arr
 	writer.cursor = cursor
 	return true
 end
+
 local function writeCFrameArray(writer: Writer, targetTable: { [any]: any }, arrayLength: number): boolean
 	for index = 1, arrayLength do
 		if typeof(targetTable[index]) ~= "CFrame" then
@@ -713,13 +478,14 @@ local function writeCFrameArray(writer: Writer, targetTable: { [any]: any }, arr
 	writer.cursor = cursor
 	return true
 end
+
 local function writeNumberArray(
 	writer: Writer,
 	targetTable: { [any]: any },
 	arrayLength: number,
 	firstElement: number
 ): boolean
-	local isAllInteger = true
+	local isAllInteger = (firstElement % 1 == 0)
 	local minValue = firstElement
 	local maxValue = firstElement
 	for index = 2, arrayLength do
@@ -727,7 +493,7 @@ local function writeNumberArray(
 		if typeof(v) ~= "number" then
 			return false
 		end
-		if v % 1 ~= 0 then
+		if isAllInteger and (v % 1 ~= 0) then
 			isAllInteger = false
 		end
 		if v < minValue then
@@ -736,7 +502,8 @@ local function writeNumberArray(
 			maxValue = v
 		end
 	end
-	if isAllInteger and firstElement % 1 == 0 then
+
+	if isAllInteger then
 		if minValue >= 0 and maxValue <= 255 then
 			ensureCapacity(writer, 7 + arrayLength)
 			local targetBuffer = writer.buff
@@ -784,8 +551,8 @@ local function writeNumberArray(
 			end
 			buffer_writeu8(targetBuffer, cursor, remainingCount)
 			cursor += 1
-			for _, numberValue in targetTable do
-				buffer_writei8(targetBuffer, cursor, numberValue)
+			for index = 1, arrayLength do
+				buffer_writei8(targetBuffer, cursor, targetTable[index])
 				cursor += 1
 			end
 			writer.cursor = cursor
@@ -804,8 +571,8 @@ local function writeNumberArray(
 			end
 			buffer_writeu8(targetBuffer, cursor, remainingCount)
 			cursor += 1
-			for _, numberValue in targetTable do
-				buffer_writeu16(targetBuffer, cursor, numberValue)
+			for index = 1, arrayLength do
+				buffer_writeu16(targetBuffer, cursor, targetTable[index])
 				cursor += 2
 			end
 			writer.cursor = cursor
@@ -824,8 +591,8 @@ local function writeNumberArray(
 			end
 			buffer_writeu8(targetBuffer, cursor, remainingCount)
 			cursor += 1
-			for _, numberValue in targetTable do
-				buffer_writei16(targetBuffer, cursor, numberValue)
+			for index = 1, arrayLength do
+				buffer_writei16(targetBuffer, cursor, targetTable[index])
 				cursor += 2
 			end
 			writer.cursor = cursor
@@ -844,8 +611,8 @@ local function writeNumberArray(
 			end
 			buffer_writeu8(targetBuffer, cursor, remainingCount)
 			cursor += 1
-			for _, numberValue in targetTable do
-				buffer_writeu32(targetBuffer, cursor, numberValue)
+			for index = 1, arrayLength do
+				buffer_writeu32(targetBuffer, cursor, targetTable[index])
 				cursor += 4
 			end
 			writer.cursor = cursor
@@ -864,48 +631,49 @@ local function writeNumberArray(
 			end
 			buffer_writeu8(targetBuffer, cursor, remainingCount)
 			cursor += 1
-			for _, numberValue in targetTable do
-				buffer_writei32(targetBuffer, cursor, numberValue)
+			for index = 1, arrayLength do
+				buffer_writei32(targetBuffer, cursor, targetTable[index])
 				cursor += 4
 			end
 			writer.cursor = cursor
 			return true
 		end
-	else
-		ensureCapacity(writer, 7 + arrayLength * 4)
-		local targetBuffer = writer.buff
-		local cursor = writer.cursor
-		buffer_writeu8(targetBuffer, cursor, TAG_ARR_F32)
-		cursor += 1
-		local remainingCount = arrayLength
-		while remainingCount >= 128 do
-			buffer_writeu8(targetBuffer, cursor, bit_bor(remainingCount, 0x80))
-			cursor += 1
-			remainingCount = bit_rshift(remainingCount, 7)
-		end
-		buffer_writeu8(targetBuffer, cursor, remainingCount)
-		cursor += 1
-		local rem = arrayLength % 8
-		local unrolled = arrayLength - rem
-		for index = 1, unrolled, 8 do
-			buffer_writef32(targetBuffer, cursor, targetTable[index])
-			buffer_writef32(targetBuffer, cursor + 4, targetTable[index + 1])
-			buffer_writef32(targetBuffer, cursor + 8, targetTable[index + 2])
-			buffer_writef32(targetBuffer, cursor + 12, targetTable[index + 3])
-			buffer_writef32(targetBuffer, cursor + 16, targetTable[index + 4])
-			buffer_writef32(targetBuffer, cursor + 20, targetTable[index + 5])
-			buffer_writef32(targetBuffer, cursor + 24, targetTable[index + 6])
-			buffer_writef32(targetBuffer, cursor + 28, targetTable[index + 7])
-			cursor += 32
-		end
-		for index = unrolled + 1, arrayLength do
-			buffer_writef32(targetBuffer, cursor, targetTable[index])
-			cursor += 4
-		end
-		writer.cursor = cursor
-		return true
 	end
+
+	ensureCapacity(writer, 7 + arrayLength * 4)
+	local targetBuffer = writer.buff
+	local cursor = writer.cursor
+	buffer_writeu8(targetBuffer, cursor, TAG_ARR_F32)
+	cursor += 1
+	local remainingCount = arrayLength
+	while remainingCount >= 128 do
+		buffer_writeu8(targetBuffer, cursor, bit_bor(remainingCount, 0x80))
+		cursor += 1
+		remainingCount = bit_rshift(remainingCount, 7)
+	end
+	buffer_writeu8(targetBuffer, cursor, remainingCount)
+	cursor += 1
+	local rem = arrayLength % 8
+	local unrolled = arrayLength - rem
+	for index = 1, unrolled, 8 do
+		buffer_writef32(targetBuffer, cursor, targetTable[index])
+		buffer_writef32(targetBuffer, cursor + 4, targetTable[index + 1])
+		buffer_writef32(targetBuffer, cursor + 8, targetTable[index + 2])
+		buffer_writef32(targetBuffer, cursor + 12, targetTable[index + 3])
+		buffer_writef32(targetBuffer, cursor + 16, targetTable[index + 4])
+		buffer_writef32(targetBuffer, cursor + 20, targetTable[index + 5])
+		buffer_writef32(targetBuffer, cursor + 24, targetTable[index + 6])
+		buffer_writef32(targetBuffer, cursor + 28, targetTable[index + 7])
+		cursor += 32
+	end
+	for index = unrolled + 1, arrayLength do
+		buffer_writef32(targetBuffer, cursor, targetTable[index])
+		cursor += 4
+	end
+	writer.cursor = cursor
+	return true
 end
+
 local function writeBooleanArray(writer: Writer, targetTable: { [any]: any }, arrayLength: number): boolean
 	for index = 1, arrayLength do
 		if typeof(targetTable[index]) ~= "boolean" then
@@ -958,13 +726,21 @@ local function writeBooleanArray(writer: Writer, targetTable: { [any]: any }, ar
 	writer.cursor = cursor
 	return true
 end
+
 local function writeStringArray(writer: Writer, targetTable: { [any]: any }, arrayLength: number): boolean
-	for _, strItem in targetTable do
-		if typeof(strItem) ~= "string" or #strItem > 255 then
+	local totalPayloadBytes = 0
+	for index = 1, arrayLength do
+		local strItem = targetTable[index]
+		if typeof(strItem) ~= "string" then
 			return false
 		end
+		local len = #strItem
+		if len > 255 then
+			return false
+		end
+		totalPayloadBytes += (1 + len)
 	end
-	ensureCapacity(writer, 7 + arrayLength * 32)
+	ensureCapacity(writer, 7 + totalPayloadBytes)
 	local targetBuffer = writer.buff
 	local cursor = writer.cursor
 	buffer_writeu8(targetBuffer, cursor, TAG_ARR_STR)
@@ -977,7 +753,8 @@ local function writeStringArray(writer: Writer, targetTable: { [any]: any }, arr
 	end
 	buffer_writeu8(targetBuffer, cursor, remainingCount)
 	cursor += 1
-	for _, strItem: string in targetTable do
+	for index = 1, arrayLength do
+		local strItem: string = targetTable[index]
 		local len = #strItem
 		buffer_writeu8(targetBuffer, cursor, len)
 		buffer_writestring(targetBuffer, cursor + 1, strItem, len)
@@ -988,60 +765,55 @@ local function writeStringArray(writer: Writer, targetTable: { [any]: any }, arr
 end
 
 local function writeDictionaryFast(writer: Writer, targetTable: { [any]: any }): boolean
-	local firstKey, firstVal = next(targetTable)
-	if
-		type(firstKey) == "string"
-		and type(firstVal) == "number"
-		and firstVal >= 0
-		and firstVal <= 255
-		and firstVal % 1 == 0
-	then
-		local entryCount = 0
-		local allMatched = true
-		for mapKey, mapValue in pairs(targetTable) do
-			if
-				type(mapKey) == "string"
-				and type(mapValue) == "number"
-				and mapValue >= 0
-				and mapValue <= 255
-				and mapValue % 1 == 0
-			then
-				entryCount += 1
-			else
-				allMatched = false
-				break
-			end
-		end
-		if allMatched and entryCount > 0 then
-			ensureCapacity(writer, 7 + entryCount * 32)
-			local targetBuffer = writer.buff
-			local cursor = writer.cursor
-			buffer_writeu8(targetBuffer, cursor, TAG_MAP_STR_U8)
-			cursor += 1
-			local remainingCount = entryCount
-			while remainingCount >= 128 do
-				buffer_writeu8(targetBuffer, cursor, bit_bor(remainingCount, 0x80))
-				cursor += 1
-				remainingCount = bit_rshift(remainingCount, 7)
-			end
-			buffer_writeu8(targetBuffer, cursor, remainingCount)
-			cursor += 1
-			for mapKey, mapValue in pairs(targetTable) do
-				local keyLength = #mapKey
-				buffer_writeu8(targetBuffer, cursor, keyLength)
-				buffer_writestring(targetBuffer, cursor + 1, mapKey, keyLength)
-				buffer_writeu8(targetBuffer, cursor + 1 + keyLength, mapValue)
-				cursor += 2 + keyLength
-			end
-			writer.cursor = cursor
-			return true
+	local entryCount = 0
+	local totalPayloadBytes = 0
+	for mapKey, mapValue in pairs(targetTable) do
+		if
+			type(mapKey) == "string"
+			and #mapKey <= 255
+			and type(mapValue) == "number"
+			and mapValue >= 0
+			and mapValue <= 255
+			and mapValue % 1 == 0
+		then
+			entryCount += 1
+			totalPayloadBytes += (2 + #mapKey)
+		else
+			return false
 		end
 	end
-	return false
+
+	if entryCount == 0 then
+		return false
+	end
+
+	ensureCapacity(writer, 7 + totalPayloadBytes)
+	local targetBuffer = writer.buff
+	local cursor = writer.cursor
+	buffer_writeu8(targetBuffer, cursor, TAG_MAP_STR_U8)
+	cursor += 1
+	local remainingCount = entryCount
+	while remainingCount >= 128 do
+		buffer_writeu8(targetBuffer, cursor, bit_bor(remainingCount, 0x80))
+		cursor += 1
+		remainingCount = bit_rshift(remainingCount, 7)
+	end
+	buffer_writeu8(targetBuffer, cursor, remainingCount)
+	cursor += 1
+	for mapKey, mapValue in pairs(targetTable) do
+		local keyLength = #mapKey
+		buffer_writeu8(targetBuffer, cursor, keyLength)
+		buffer_writestring(targetBuffer, cursor + 1, mapKey, keyLength)
+		buffer_writeu8(targetBuffer, cursor + 1 + keyLength, mapValue)
+		cursor += 2 + keyLength
+	end
+	writer.cursor = cursor
+	return true
 end
+
 local function writeTableValue(writer: Writer, targetTable: { [any]: any }, currentDepth: number)
 	local arrayLength = #targetTable
-	if arrayLength > 0 then
+	if arrayLength > 0 and next(targetTable, arrayLength) == nil then
 		local firstElement = targetTable[1]
 		local elementType = type(firstElement)
 		if elementType == "vector" then
@@ -1050,7 +822,15 @@ local function writeTableValue(writer: Writer, targetTable: { [any]: any }, curr
 			end
 		elseif elementType == "userdata" then
 			local userdataType = typeof(firstElement)
-			if userdataType == "Color3" then
+			if userdataType == "Vector3" then
+				if writeVector3Array(writer, targetTable, arrayLength) then
+					return
+				end
+			elseif userdataType == "Vector2" then
+				if writeVector2Array(writer, targetTable, arrayLength) then
+					return
+				end
+			elseif userdataType == "Color3" then
 				if writeColor3Array(writer, targetTable, arrayLength) then
 					return
 				end
@@ -1072,9 +852,12 @@ local function writeTableValue(writer: Writer, targetTable: { [any]: any }, curr
 				return
 			end
 		end
-		ensureCapacity(writer, 1)
-		buffer_writeu8(writer.buff, writer.cursor, TAG_ARRAY)
-		writer.cursor += 1
+
+		ensureCapacity(writer, 6)
+		local targetBuffer = writer.buff
+		local cursor = writer.cursor
+		buffer_writeu8(targetBuffer, cursor, TAG_ARRAY)
+		writer.cursor = cursor + 1
 		writeVariableInteger(writer, arrayLength)
 		for index = 1, arrayLength do
 			writeAnyValue(writer, targetTable[index], currentDepth + 1)
@@ -1089,9 +872,11 @@ local function writeTableValue(writer: Writer, targetTable: { [any]: any }, curr
 				validMapEntries += 1
 			end
 		end
-		ensureCapacity(writer, 1)
-		buffer_writeu8(writer.buff, writer.cursor, TAG_MAP)
-		writer.cursor += 1
+		ensureCapacity(writer, 6)
+		local targetBuffer = writer.buff
+		local cursor = writer.cursor
+		buffer_writeu8(targetBuffer, cursor, TAG_MAP)
+		writer.cursor = cursor + 1
 		writeVariableInteger(writer, validMapEntries)
 		for mapKey, mapValue in pairs(targetTable) do
 			if mapKey ~= nil and mapKey == mapKey then
@@ -1101,6 +886,7 @@ local function writeTableValue(writer: Writer, targetTable: { [any]: any }, curr
 		end
 	end
 end
+
 writeAnyValue = function(writer: Writer, targetValue: any, currentDepth: number)
 	if currentDepth > MAX_SERIALIZATION_DEPTH then
 		return
@@ -1192,26 +978,6 @@ writeAnyValue = function(writer: Writer, targetValue: any, currentDepth: number)
 				end
 			end
 		else
-			local float16Bits = encodeFloat16(targetValue)
-			if float16Bits ~= nil then
-				ensureCapacity(writer, 3)
-				local targetBuffer = writer.buff
-				local cursor = writer.cursor
-				buffer_writeu8(targetBuffer, cursor, TAG_F16)
-				writeFloat16Bytes(targetBuffer, cursor + 1, float16Bits)
-				writer.cursor = cursor + 3
-				return
-			end
-			local float24Bits = encodeFloat24(targetValue)
-			if float24Bits ~= nil then
-				ensureCapacity(writer, 4)
-				local targetBuffer = writer.buff
-				local cursor = writer.cursor
-				buffer_writeu8(targetBuffer, cursor, TAG_F24)
-				writeFloat24Bytes(targetBuffer, cursor + 1, float24Bits)
-				writer.cursor = cursor + 4
-				return
-			end
 			buffer_writef32(scratchFloatConversionBuffer, 0, targetValue)
 			if buffer_readf32(scratchFloatConversionBuffer, 0) == targetValue then
 				ensureCapacity(writer, 5)
@@ -1271,28 +1037,14 @@ writeAnyValue = function(writer: Writer, targetValue: any, currentDepth: number)
 		writer.cursor = cursor + bufferBytesLength
 	elseif valueType == "vector" then
 		local vectorValue: Vector3 = targetValue
-		local encodedX = encodeFloat16(vectorValue.X)
-		local encodedY = encodeFloat16(vectorValue.Y)
-		local encodedZ = encodeFloat16(vectorValue.Z)
-		if encodedX ~= nil and encodedY ~= nil and encodedZ ~= nil then
-			ensureCapacity(writer, 7)
-			local targetBuffer = writer.buff
-			local cursor = writer.cursor
-			buffer_writeu8(targetBuffer, cursor, TAG_VEC3_F16)
-			writeFloat16Bytes(targetBuffer, cursor + 1, encodedX)
-			writeFloat16Bytes(targetBuffer, cursor + 3, encodedY)
-			writeFloat16Bytes(targetBuffer, cursor + 5, encodedZ)
-			writer.cursor = cursor + 7
-		else
-			ensureCapacity(writer, 13)
-			local targetBuffer = writer.buff
-			local cursor = writer.cursor
-			buffer_writeu8(targetBuffer, cursor, TAG_VEC3)
-			buffer_writef32(targetBuffer, cursor + 1, vectorValue.X)
-			buffer_writef32(targetBuffer, cursor + 5, vectorValue.Y)
-			buffer_writef32(targetBuffer, cursor + 9, vectorValue.Z)
-			writer.cursor = cursor + 13
-		end
+		ensureCapacity(writer, 13)
+		local targetBuffer = writer.buff
+		local cursor = writer.cursor
+		buffer_writeu8(targetBuffer, cursor, TAG_VEC3)
+		buffer_writef32(targetBuffer, cursor + 1, vectorValue.X)
+		buffer_writef32(targetBuffer, cursor + 5, vectorValue.Y)
+		buffer_writef32(targetBuffer, cursor + 9, vectorValue.Z)
+		writer.cursor = cursor + 13
 	elseif valueType == "userdata" then
 		local userdataType = typeof(targetValue)
 		if userdataType == "Instance" then
@@ -1303,49 +1055,23 @@ writeAnyValue = function(writer: Writer, targetValue: any, currentDepth: number)
 			writeVariableInteger(writer, #writer.insts)
 		elseif userdataType == "Vector3" then
 			local vectorValue: Vector3 = targetValue
-			local encodedX = encodeFloat16(vectorValue.X)
-			local encodedY = encodeFloat16(vectorValue.Y)
-			local encodedZ = encodeFloat16(vectorValue.Z)
-			if encodedX ~= nil and encodedY ~= nil and encodedZ ~= nil then
-				ensureCapacity(writer, 7)
-				local targetBuffer = writer.buff
-				local cursor = writer.cursor
-				buffer_writeu8(targetBuffer, cursor, TAG_VEC3_F16)
-				writeFloat16Bytes(targetBuffer, cursor + 1, encodedX)
-				writeFloat16Bytes(targetBuffer, cursor + 3, encodedY)
-				writeFloat16Bytes(targetBuffer, cursor + 5, encodedZ)
-				writer.cursor = cursor + 7
-			else
-				ensureCapacity(writer, 13)
-				local targetBuffer = writer.buff
-				local cursor = writer.cursor
-				buffer_writeu8(targetBuffer, cursor, TAG_VEC3)
-				buffer_writef32(targetBuffer, cursor + 1, vectorValue.X)
-				buffer_writef32(targetBuffer, cursor + 5, vectorValue.Y)
-				buffer_writef32(targetBuffer, cursor + 9, vectorValue.Z)
-				writer.cursor = cursor + 13
-			end
+			ensureCapacity(writer, 13)
+			local targetBuffer = writer.buff
+			local cursor = writer.cursor
+			buffer_writeu8(targetBuffer, cursor, TAG_VEC3)
+			buffer_writef32(targetBuffer, cursor + 1, vectorValue.X)
+			buffer_writef32(targetBuffer, cursor + 5, vectorValue.Y)
+			buffer_writef32(targetBuffer, cursor + 9, vectorValue.Z)
+			writer.cursor = cursor + 13
 		elseif userdataType == "Vector2" then
 			local vector2Value: Vector2 = targetValue
-			local encodedX = encodeFloat16(vector2Value.X)
-			local encodedY = encodeFloat16(vector2Value.Y)
-			if encodedX ~= nil and encodedY ~= nil then
-				ensureCapacity(writer, 5)
-				local targetBuffer = writer.buff
-				local cursor = writer.cursor
-				buffer_writeu8(targetBuffer, cursor, TAG_VEC2_F16)
-				writeFloat16Bytes(targetBuffer, cursor + 1, encodedX)
-				writeFloat16Bytes(targetBuffer, cursor + 3, encodedY)
-				writer.cursor = cursor + 5
-			else
-				ensureCapacity(writer, 9)
-				local targetBuffer = writer.buff
-				local cursor = writer.cursor
-				buffer_writeu8(targetBuffer, cursor, TAG_VEC2)
-				buffer_writef32(targetBuffer, cursor + 1, vector2Value.X)
-				buffer_writef32(targetBuffer, cursor + 5, vector2Value.Y)
-				writer.cursor = cursor + 9
-			end
+			ensureCapacity(writer, 9)
+			local targetBuffer = writer.buff
+			local cursor = writer.cursor
+			buffer_writeu8(targetBuffer, cursor, TAG_VEC2)
+			buffer_writef32(targetBuffer, cursor + 1, vector2Value.X)
+			buffer_writef32(targetBuffer, cursor + 5, vector2Value.Y)
+			writer.cursor = cursor + 9
 		elseif userdataType == "CFrame" then
 			local cframeValue: CFrame = targetValue
 			local position = cframeValue.Position
@@ -1587,117 +1313,27 @@ writeAnyValue = function(writer: Writer, targetValue: any, currentDepth: number)
 		end
 	end
 end
+
 local function readAnyValue(reader: Reader, currentDepth: number): any
 	if currentDepth > MAX_SERIALIZATION_DEPTH or reader.cursor >= reader.len then
 		return nil
 	end
 	local tagByte = buffer_readu8(reader.buff, reader.cursor)
 	reader.cursor += 1
-	if tagByte == TAG_NIL then
-		return nil
-	elseif tagByte == TAG_FALSE then
-		return false
-	elseif tagByte == TAG_TRUE then
-		return true
-	elseif tagByte == TAG_U8 then
+
+	if tagByte == TAG_U8 then
 		local cursor = reader.cursor
-		if cursor >= reader.len then
-			return 0
-		end
+		if cursor >= reader.len then return 0 end
 		reader.cursor = cursor + 1
 		return buffer_readu8(reader.buff, cursor)
-	elseif tagByte == TAG_U16 then
-		local cursor = reader.cursor
-		if cursor + 2 > reader.len then
-			reader.cursor = reader.len
-			return 0
-		end
-		reader.cursor = cursor + 2
-		return buffer_readu16(reader.buff, cursor)
-	elseif tagByte == TAG_U24 then
-		local cursor = reader.cursor
-		if cursor + 3 > reader.len then
-			reader.cursor = reader.len
-			return 0
-		end
-		reader.cursor = cursor + 3
-		return readUnsigned24(reader.buff, cursor)
-	elseif tagByte == TAG_U32 then
-		local cursor = reader.cursor
-		if cursor + 4 > reader.len then
-			reader.cursor = reader.len
-			return 0
-		end
-		reader.cursor = cursor + 4
-		return buffer_readu32(reader.buff, cursor)
-	elseif tagByte == TAG_I8 then
-		local cursor = reader.cursor
-		if cursor >= reader.len then
-			return 0
-		end
-		reader.cursor = cursor + 1
-		return buffer_readi8(reader.buff, cursor)
-	elseif tagByte == TAG_I16 then
-		local cursor = reader.cursor
-		if cursor + 2 > reader.len then
-			reader.cursor = reader.len
-			return 0
-		end
-		reader.cursor = cursor + 2
-		return buffer_readi16(reader.buff, cursor)
-	elseif tagByte == TAG_I24 then
-		local cursor = reader.cursor
-		if cursor + 3 > reader.len then
-			reader.cursor = reader.len
-			return 0
-		end
-		reader.cursor = cursor + 3
-		return readSigned24(reader.buff, cursor)
-	elseif tagByte == TAG_I32 then
-		local cursor = reader.cursor
-		if cursor + 4 > reader.len then
-			reader.cursor = reader.len
-			return 0
-		end
-		reader.cursor = cursor + 4
-		return buffer_readi32(reader.buff, cursor)
-	elseif tagByte == TAG_F16 then
-		local cursor = reader.cursor
-		if cursor + 2 > reader.len then
-			reader.cursor = reader.len
-			return 0
-		end
-		reader.cursor = cursor + 2
-		return decodeFloat16(readFloat16Bytes(reader.buff, cursor))
-	elseif tagByte == TAG_F24 then
-		local cursor = reader.cursor
-		if cursor + 3 > reader.len then
-			reader.cursor = reader.len
-			return 0
-		end
-		reader.cursor = cursor + 3
-		return decodeFloat24(readFloat24Bytes(reader.buff, cursor))
 	elseif tagByte == TAG_F32 then
 		local cursor = reader.cursor
-		if cursor + 4 > reader.len then
-			reader.cursor = reader.len
-			return 0
-		end
+		if cursor + 4 > reader.len then reader.cursor = reader.len; return 0 end
 		reader.cursor = cursor + 4
 		return buffer_readf32(reader.buff, cursor)
-	elseif tagByte == TAG_F64 then
-		local cursor = reader.cursor
-		if cursor + 8 > reader.len then
-			reader.cursor = reader.len
-			return 0
-		end
-		reader.cursor = cursor + 8
-		return buffer_readf64(reader.buff, cursor)
 	elseif tagByte == TAG_STR8 then
 		local cursor = reader.cursor
-		if cursor >= reader.len then
-			return ""
-		end
+		if cursor >= reader.len then return "" end
 		local strLength = buffer_readu8(reader.buff, cursor)
 		cursor += 1
 		if cursor + strLength > reader.len then
@@ -1705,106 +1341,68 @@ local function readAnyValue(reader: Reader, currentDepth: number): any
 		end
 		reader.cursor = cursor + strLength
 		return if strLength > 0 then buffer_readstring(reader.buff, cursor, strLength) else ""
-	elseif tagByte == TAG_STR16 then
+	elseif tagByte == TAG_FALSE then
+		return false
+	elseif tagByte == TAG_TRUE then
+		return true
+	elseif tagByte == TAG_NIL then
+		return nil
+	elseif tagByte == TAG_VEC3 then
 		local cursor = reader.cursor
-		if cursor + 2 > reader.len then
-			reader.cursor = reader.len
-			return ""
-		end
-		local strLength = buffer_readu16(reader.buff, cursor)
-		cursor += 2
-		if cursor + strLength > reader.len then
-			strLength = math_max(0, reader.len - cursor)
-		end
-		reader.cursor = cursor + strLength
-		return if strLength > 0 then buffer_readstring(reader.buff, cursor, strLength) else ""
+		if cursor + 12 > reader.len then reader.cursor = reader.len; return Vector3.zero end
+		reader.cursor = cursor + 12
+		return Vector3.new(
+			buffer_readf32(reader.buff, cursor),
+			buffer_readf32(reader.buff, cursor + 4),
+			buffer_readf32(reader.buff, cursor + 8)
+		)
+	elseif tagByte == TAG_U16 then
+		local cursor = reader.cursor
+		if cursor + 2 > reader.len then reader.cursor = reader.len; return 0 end
+		reader.cursor = cursor + 2
+		return buffer_readu16(reader.buff, cursor)
+	elseif tagByte == TAG_U32 then
+		local cursor = reader.cursor
+		if cursor + 4 > reader.len then reader.cursor = reader.len; return 0 end
+		reader.cursor = cursor + 4
+		return buffer_readu32(reader.buff, cursor)
+	elseif tagByte == TAG_I8 then
+		local cursor = reader.cursor
+		if cursor >= reader.len then return 0 end
+		reader.cursor = cursor + 1
+		return buffer_readi8(reader.buff, cursor)
+	elseif tagByte == TAG_I16 then
+		local cursor = reader.cursor
+		if cursor + 2 > reader.len then reader.cursor = reader.len; return 0 end
+		reader.cursor = cursor + 2
+		return buffer_readi16(reader.buff, cursor)
+	elseif tagByte == TAG_I32 then
+		local cursor = reader.cursor
+		if cursor + 4 > reader.len then reader.cursor = reader.len; return 0 end
+		reader.cursor = cursor + 4
+		return buffer_readi32(reader.buff, cursor)
+	elseif tagByte == TAG_F64 then
+		local cursor = reader.cursor
+		if cursor + 8 > reader.len then reader.cursor = reader.len; return 0 end
+		reader.cursor = cursor + 8
+		return buffer_readf64(reader.buff, cursor)
 	elseif tagByte == TAG_COLOR3 then
 		local cursor = reader.cursor
-		if cursor + 3 > reader.len then
-			reader.cursor = reader.len
-			return Color3.new()
-		end
+		if cursor + 3 > reader.len then reader.cursor = reader.len; return Color3.new() end
 		reader.cursor = cursor + 3
 		return Color3.fromRGB(
 			buffer_readu8(reader.buff, cursor),
 			buffer_readu8(reader.buff, cursor + 1),
 			buffer_readu8(reader.buff, cursor + 2)
 		)
-	elseif tagByte == TAG_VEC3 then
-		local cursor = reader.cursor
-		if cursor + 12 > reader.len then
-			reader.cursor = reader.len
-			return Vector3.zero
-		end
-		reader.cursor = cursor + 12
-		return Vector3.new(
-			buffer_readf32(reader.buff, cursor),
-			buffer_readf32(reader.buff, cursor + 4),
-			buffer_readf32(reader.buff, cursor + 8)
-		)
-	elseif tagByte == TAG_VEC3_F16 then
-		local cursor = reader.cursor
-		if cursor + 6 > reader.len then
-			reader.cursor = reader.len
-			return Vector3.zero
-		end
-		reader.cursor = cursor + 6
-		return Vector3.new(
-			decodeFloat16(readFloat16Bytes(reader.buff, cursor)),
-			decodeFloat16(readFloat16Bytes(reader.buff, cursor + 2)),
-			decodeFloat16(readFloat16Bytes(reader.buff, cursor + 4))
-		)
 	elseif tagByte == TAG_VEC2 then
 		local cursor = reader.cursor
-		if cursor + 8 > reader.len then
-			reader.cursor = reader.len
-			return Vector2.zero
-		end
+		if cursor + 8 > reader.len then reader.cursor = reader.len; return Vector2.zero end
 		reader.cursor = cursor + 8
 		return Vector2.new(buffer_readf32(reader.buff, cursor), buffer_readf32(reader.buff, cursor + 4))
-	elseif tagByte == TAG_VEC2_F16 then
-		local cursor = reader.cursor
-		if cursor + 4 > reader.len then
-			reader.cursor = reader.len
-			return Vector2.zero
-		end
-		reader.cursor = cursor + 4
-		return Vector2.new(
-			decodeFloat16(readFloat16Bytes(reader.buff, cursor)),
-			decodeFloat16(readFloat16Bytes(reader.buff, cursor + 2))
-		)
-	elseif tagByte == TAG_CF_POS then
-		local cursor = reader.cursor
-		if cursor + 12 > reader.len then
-			reader.cursor = reader.len
-			return CFrame.identity
-		end
-		reader.cursor = cursor + 12
-		return CFrame.new(
-			buffer_readf32(reader.buff, cursor),
-			buffer_readf32(reader.buff, cursor + 4),
-			buffer_readf32(reader.buff, cursor + 8)
-		)
-	elseif tagByte == TAG_CF_YAW then
-		local cursor = reader.cursor
-		if cursor + 14 > reader.len then
-			reader.cursor = reader.len
-			return CFrame.identity
-		end
-		reader.cursor = cursor + 14
-		local position = Vector3.new(
-			buffer_readf32(reader.buff, cursor),
-			buffer_readf32(reader.buff, cursor + 4),
-			buffer_readf32(reader.buff, cursor + 8)
-		)
-		local normalizedYaw = (buffer_readu16(reader.buff, cursor + 12) / 65535) * (2 * math_pi)
-		return CFrame.Angles(0, normalizedYaw, 0) + position
 	elseif tagByte == TAG_CF then
 		local cursor = reader.cursor
-		if cursor + 24 > reader.len then
-			reader.cursor = reader.len
-			return CFrame.identity
-		end
+		if cursor + 24 > reader.len then reader.cursor = reader.len; return CFrame.identity end
 		reader.cursor = cursor + 24
 		local posX = buffer_readf32(reader.buff, cursor)
 		local posY = buffer_readf32(reader.buff, cursor + 4)
@@ -1813,67 +1411,24 @@ local function readAnyValue(reader: Reader, currentDepth: number): any
 		local rotY = buffer_readf32(reader.buff, cursor + 16)
 		local rotZ = buffer_readf32(reader.buff, cursor + 20)
 		return CFrame.Angles(rotX, rotY, rotZ) + Vector3.new(posX, posY, posZ)
-	elseif tagByte == TAG_UDIM then
-		local cursor = reader.cursor
-		if cursor + 6 > reader.len then
-			reader.cursor = reader.len
-			return UDim.new()
-		end
-		reader.cursor = cursor + 6
-		return UDim.new(buffer_readf32(reader.buff, cursor), buffer_readi16(reader.buff, cursor + 4))
-	elseif tagByte == TAG_UDIM2 then
-		local cursor = reader.cursor
-		if cursor + 12 > reader.len then
-			reader.cursor = reader.len
-			return UDim2.new()
-		end
-		reader.cursor = cursor + 12
-		return UDim2.new(
-			buffer_readf32(reader.buff, cursor),
-			buffer_readi16(reader.buff, cursor + 4),
-			buffer_readf32(reader.buff, cursor + 6),
-			buffer_readi16(reader.buff, cursor + 10)
-		)
-	elseif tagByte == TAG_BRICKCOLOR then
-		local cursor = reader.cursor
-		if cursor + 2 > reader.len then
-			reader.cursor = reader.len
-			return BrickColor.new(1)
-		end
-		reader.cursor = cursor + 2
-		return BrickColor.new(buffer_readu16(reader.buff, cursor))
-	elseif tagByte == TAG_INSTANCE then
-		return reader.insts[readVariableInteger(reader)]
-	elseif tagByte == TAG_STR_VAR then
-		return readLengthPrefixedString(reader)
 	elseif tagByte == TAG_ARRAY then
 		local elementCount = readVariableInteger(reader)
 		local availableBytes = reader.len - reader.cursor
-		if elementCount > availableBytes then
-			elementCount = availableBytes
-		end
-		if elementCount <= 0 then
-			return {}
-		end
+		if elementCount > availableBytes then elementCount = availableBytes end
+		if elementCount <= 0 then return {} end
 		local arrayResult = table_create(elementCount)
 		for index = 1, elementCount do
-			if reader.cursor >= reader.len then
-				break
-			end
+			if reader.cursor >= reader.len then break end
 			arrayResult[index] = readAnyValue(reader, currentDepth + 1)
 		end
 		return arrayResult
 	elseif tagByte == TAG_MAP then
 		local pairCount = readVariableInteger(reader)
 		local availableBytes = reader.len - reader.cursor
-		if pairCount > availableBytes then
-			pairCount = availableBytes
-		end
+		if pairCount > availableBytes then pairCount = availableBytes end
 		local mapResult = {}
 		for _ = 1, pairCount do
-			if reader.cursor >= reader.len then
-				break
-			end
+			if reader.cursor >= reader.len then break end
 			local mapKey = readAnyValue(reader, currentDepth + 1)
 			if mapKey == nil or mapKey ~= mapKey then
 				readAnyValue(reader, currentDepth + 1)
@@ -1882,39 +1437,11 @@ local function readAnyValue(reader: Reader, currentDepth: number): any
 			end
 		end
 		return mapResult
-	elseif tagByte == TAG_MAP_STR_U8 then
-		local pairCount = readVariableInteger(reader)
-		local availableBytes = reader.len - reader.cursor
-		if pairCount > availableBytes then
-			pairCount = availableBytes
-		end
-		local mapResult = {}
-		local cursor = reader.cursor
-		local sourceBuffer = reader.buff
-		for _ = 1, pairCount do
-			if cursor >= reader.len then
-				break
-			end
-			local keyLength = buffer_readu8(sourceBuffer, cursor)
-			if cursor + 2 + keyLength > reader.len then
-				break
-			end
-			local keyString = buffer_readstring(sourceBuffer, cursor + 1, keyLength)
-			local valueU8 = buffer_readu8(sourceBuffer, cursor + 1 + keyLength)
-			mapResult[keyString] = valueU8
-			cursor += 2 + keyLength
-		end
-		reader.cursor = cursor
-		return mapResult
 	elseif tagByte == TAG_ARR_U8 then
 		local count = readVariableInteger(reader)
 		local availableBytes = reader.len - reader.cursor
-		if count > availableBytes then
-			count = availableBytes
-		end
-		if count <= 0 then
-			return {}
-		end
+		if count > availableBytes then count = availableBytes end
+		if count <= 0 then return {} end
 		local arrayResult = table_create(count)
 		local cursor = reader.cursor
 		local sourceBuffer = reader.buff
@@ -1944,100 +1471,11 @@ local function readAnyValue(reader: Reader, currentDepth: number): any
 		end
 		reader.cursor = cursor
 		return arrayResult
-	elseif tagByte == TAG_ARR_I8 then
-		local count = readVariableInteger(reader)
-		local availableBytes = reader.len - reader.cursor
-		if count > availableBytes then
-			count = availableBytes
-		end
-		if count <= 0 then
-			return {}
-		end
-		local arrayResult = table_create(count)
-		local cursor = reader.cursor
-		for index = 1, count do
-			arrayResult[index] = buffer_readi8(reader.buff, cursor)
-			cursor += 1
-		end
-		reader.cursor = cursor
-		return arrayResult
-	elseif tagByte == TAG_ARR_U16 then
-		local count = readVariableInteger(reader)
-		local availableElements = (reader.len - reader.cursor) // 2
-		if count > availableElements then
-			count = availableElements
-		end
-		if count <= 0 then
-			return {}
-		end
-		local arrayResult = table_create(count)
-		local cursor = reader.cursor
-		for index = 1, count do
-			arrayResult[index] = buffer_readu16(reader.buff, cursor)
-			cursor += 2
-		end
-		reader.cursor = cursor
-		return arrayResult
-	elseif tagByte == TAG_ARR_I16 then
-		local count = readVariableInteger(reader)
-		local availableElements = (reader.len - reader.cursor) // 2
-		if count > availableElements then
-			count = availableElements
-		end
-		if count <= 0 then
-			return {}
-		end
-		local arrayResult = table_create(count)
-		local cursor = reader.cursor
-		for index = 1, count do
-			arrayResult[index] = buffer_readi16(reader.buff, cursor)
-			cursor += 2
-		end
-		reader.cursor = cursor
-		return arrayResult
-	elseif tagByte == TAG_ARR_U32 then
-		local count = readVariableInteger(reader)
-		local availableElements = (reader.len - reader.cursor) // 4
-		if count > availableElements then
-			count = availableElements
-		end
-		if count <= 0 then
-			return {}
-		end
-		local arrayResult = table_create(count)
-		local cursor = reader.cursor
-		for index = 1, count do
-			arrayResult[index] = buffer_readu32(reader.buff, cursor)
-			cursor += 4
-		end
-		reader.cursor = cursor
-		return arrayResult
-	elseif tagByte == TAG_ARR_I32 then
-		local count = readVariableInteger(reader)
-		local availableElements = (reader.len - reader.cursor) // 4
-		if count > availableElements then
-			count = availableElements
-		end
-		if count <= 0 then
-			return {}
-		end
-		local arrayResult = table_create(count)
-		local cursor = reader.cursor
-		for index = 1, count do
-			arrayResult[index] = buffer_readi32(reader.buff, cursor)
-			cursor += 4
-		end
-		reader.cursor = cursor
-		return arrayResult
 	elseif tagByte == TAG_ARR_F32 then
 		local count = readVariableInteger(reader)
 		local availableElements = (reader.len - reader.cursor) // 4
-		if count > availableElements then
-			count = availableElements
-		end
-		if count <= 0 then
-			return {}
-		end
+		if count > availableElements then count = availableElements end
+		if count <= 0 then return {} end
 		local arrayResult = table_create(count)
 		local cursor = reader.cursor
 		local sourceBuffer = reader.buff
@@ -2060,141 +1498,11 @@ local function readAnyValue(reader: Reader, currentDepth: number): any
 		end
 		reader.cursor = cursor
 		return arrayResult
-	elseif tagByte == TAG_ARR_F64 then
-		local count = readVariableInteger(reader)
-		local availableElements = (reader.len - reader.cursor) // 8
-		if count > availableElements then
-			count = availableElements
-		end
-		if count <= 0 then
-			return {}
-		end
-		local arrayResult = table_create(count)
-		local cursor = reader.cursor
-		for index = 1, count do
-			arrayResult[index] = buffer_readf64(reader.buff, cursor)
-			cursor += 8
-		end
-		reader.cursor = cursor
-		return arrayResult
-	elseif tagByte == TAG_ARR_BOOL then
-		local count = readVariableInteger(reader)
-		local availableBytes = reader.len - reader.cursor
-		local maximumBoolsPossible = availableBytes * 8
-		if count > maximumBoolsPossible then
-			count = maximumBoolsPossible
-		end
-		if count <= 0 then
-			return {}
-		end
-		local arrayResult = table_create(count)
-		local sixteenBitBlocks = count // 16
-		local elementPointer = 1
-		local cursor = reader.cursor
-		local sourceBuffer = reader.buff
-		for _ = 1, sixteenBitBlocks do
-			if cursor + 2 > reader.len then
-				break
-			end
-			local b1 = byteToBooleanLookupTable[buffer_readu8(sourceBuffer, cursor)]
-			local b2 = byteToBooleanLookupTable[buffer_readu8(sourceBuffer, cursor + 1)]
-			cursor += 2
-			arrayResult[elementPointer] = b1[1]
-			arrayResult[elementPointer + 1] = b1[2]
-			arrayResult[elementPointer + 2] = b1[3]
-			arrayResult[elementPointer + 3] = b1[4]
-			arrayResult[elementPointer + 4] = b1[5]
-			arrayResult[elementPointer + 5] = b1[6]
-			arrayResult[elementPointer + 6] = b1[7]
-			arrayResult[elementPointer + 7] = b1[8]
-			arrayResult[elementPointer + 8] = b2[1]
-			arrayResult[elementPointer + 9] = b2[2]
-			arrayResult[elementPointer + 10] = b2[3]
-			arrayResult[elementPointer + 11] = b2[4]
-			arrayResult[elementPointer + 12] = b2[5]
-			arrayResult[elementPointer + 13] = b2[6]
-			arrayResult[elementPointer + 14] = b2[7]
-			arrayResult[elementPointer + 15] = b2[8]
-			elementPointer += 16
-		end
-		local remainingEightBlocks = (count - sixteenBitBlocks * 16) // 8
-		if remainingEightBlocks > 0 and cursor < reader.len then
-			local b1 = byteToBooleanLookupTable[buffer_readu8(sourceBuffer, cursor)]
-			cursor += 1
-			arrayResult[elementPointer] = b1[1]
-			arrayResult[elementPointer + 1] = b1[2]
-			arrayResult[elementPointer + 2] = b1[3]
-			arrayResult[elementPointer + 3] = b1[4]
-			arrayResult[elementPointer + 4] = b1[5]
-			arrayResult[elementPointer + 5] = b1[6]
-			arrayResult[elementPointer + 6] = b1[7]
-			arrayResult[elementPointer + 7] = b1[8]
-			elementPointer += 8
-		end
-		local remainder = count % 8
-		if remainder > 0 and cursor < reader.len then
-			local b1 = byteToBooleanLookupTable[buffer_readu8(sourceBuffer, cursor)]
-			cursor += 1
-			for bitIdx = 1, remainder do
-				arrayResult[elementPointer + bitIdx - 1] = b1[bitIdx]
-			end
-		end
-		reader.cursor = cursor
-		return arrayResult
-	elseif tagByte == TAG_ARR_STR then
-		local count = readVariableInteger(reader)
-		local availableBytes = reader.len - reader.cursor
-		if count > availableBytes then
-			count = availableBytes
-		end
-		if count <= 0 then
-			return {}
-		end
-		local arrayResult = table_create(count)
-		local cursor = reader.cursor
-		local sourceBuffer = reader.buff
-		local rem = count % 4
-		local unrolled = count - rem
-		for index = 1, unrolled, 4 do
-			if cursor >= reader.len then
-				break
-			end
-			local l1 = buffer_readu8(sourceBuffer, cursor)
-			local s1 = buffer_readstring(sourceBuffer, cursor + 1, l1)
-			cursor += 1 + l1
-			local l2 = buffer_readu8(sourceBuffer, cursor)
-			local s2 = buffer_readstring(sourceBuffer, cursor + 1, l2)
-			cursor += 1 + l2
-			local l3 = buffer_readu8(sourceBuffer, cursor)
-			local s3 = buffer_readstring(sourceBuffer, cursor + 1, l3)
-			cursor += 1 + l3
-			local l4 = buffer_readu8(sourceBuffer, cursor)
-			local s4 = buffer_readstring(sourceBuffer, cursor + 1, l4)
-			cursor += 1 + l4
-			arrayResult[index] = s1
-			arrayResult[index + 1] = s2
-			arrayResult[index + 2] = s3
-			arrayResult[index + 3] = s4
-		end
-		for index = unrolled + 1, count do
-			if cursor >= reader.len then
-				break
-			end
-			local l = buffer_readu8(sourceBuffer, cursor)
-			arrayResult[index] = buffer_readstring(sourceBuffer, cursor + 1, l)
-			cursor += 1 + l
-		end
-		reader.cursor = cursor
-		return arrayResult
 	elseif tagByte == TAG_ARR_VEC3 then
 		local count = readVariableInteger(reader)
 		local availableElements = (reader.len - reader.cursor) // 12
-		if count > availableElements then
-			count = availableElements
-		end
-		if count <= 0 then
-			return {}
-		end
+		if count > availableElements then count = availableElements end
+		if count <= 0 then return {} end
 		local arrayResult = table_create(count)
 		local cursor = reader.cursor
 		local sourceBuffer = reader.buff
@@ -2232,43 +1540,88 @@ local function readAnyValue(reader: Reader, currentDepth: number): any
 		end
 		reader.cursor = cursor
 		return arrayResult
-	elseif tagByte == TAG_ARR_COLOR3 then
+	elseif tagByte == TAG_ARR_VEC2 then
 		local count = readVariableInteger(reader)
-		local availableElements = (reader.len - reader.cursor) // 3
-		if count > availableElements then
-			count = availableElements
-		end
-		if count <= 0 then
-			return {}
-		end
+		local availableElements = (reader.len - reader.cursor) // 8
+		if count > availableElements then count = availableElements end
+		if count <= 0 then return {} end
 		local arrayResult = table_create(count)
 		local cursor = reader.cursor
 		local sourceBuffer = reader.buff
-		local fourColorBlocks = count - (count % 4)
-		for index = 1, fourColorBlocks, 4 do
-			arrayResult[index] = Color3.fromRGB(
-				buffer_readu8(sourceBuffer, cursor),
-				buffer_readu8(sourceBuffer, cursor + 1),
-				buffer_readu8(sourceBuffer, cursor + 2)
+		for index = 1, count do
+			arrayResult[index] = Vector2.new(
+				buffer_readf32(sourceBuffer, cursor),
+				buffer_readf32(sourceBuffer, cursor + 4)
 			)
-			arrayResult[index + 1] = Color3.fromRGB(
-				buffer_readu8(sourceBuffer, cursor + 3),
-				buffer_readu8(sourceBuffer, cursor + 4),
-				buffer_readu8(sourceBuffer, cursor + 5)
-			)
-			arrayResult[index + 2] = Color3.fromRGB(
-				buffer_readu8(sourceBuffer, cursor + 6),
-				buffer_readu8(sourceBuffer, cursor + 7),
-				buffer_readu8(sourceBuffer, cursor + 8)
-			)
-			arrayResult[index + 3] = Color3.fromRGB(
-				buffer_readu8(sourceBuffer, cursor + 9),
-				buffer_readu8(sourceBuffer, cursor + 10),
-				buffer_readu8(sourceBuffer, cursor + 11)
-			)
-			cursor += 12
+			cursor += 8
 		end
-		for index = fourColorBlocks + 1, count do
+		reader.cursor = cursor
+		return arrayResult
+	elseif tagByte == TAG_ARR_BOOL then
+		local count = readVariableInteger(reader)
+		local availableBytes = reader.len - reader.cursor
+		local maximumBoolsPossible = availableBytes * 8
+		if count > maximumBoolsPossible then count = maximumBoolsPossible end
+		if count <= 0 then return {} end
+		local arrayResult = table_create(count)
+		local eightBitBlocks = count // 8
+		local elementPointer = 1
+		local cursor = reader.cursor
+		local sourceBuffer = reader.buff
+		for _ = 1, eightBitBlocks do
+			local byteValue = buffer_readu8(sourceBuffer, cursor)
+			cursor += 1
+			arrayResult[elementPointer] = bit_btest(byteValue, 1)
+			arrayResult[elementPointer + 1] = bit_btest(byteValue, 2)
+			arrayResult[elementPointer + 2] = bit_btest(byteValue, 4)
+			arrayResult[elementPointer + 3] = bit_btest(byteValue, 8)
+			arrayResult[elementPointer + 4] = bit_btest(byteValue, 16)
+			arrayResult[elementPointer + 5] = bit_btest(byteValue, 32)
+			arrayResult[elementPointer + 6] = bit_btest(byteValue, 64)
+			arrayResult[elementPointer + 7] = bit_btest(byteValue, 128)
+			elementPointer += 8
+		end
+		local remainder = count % 8
+		if remainder > 0 and cursor < reader.len then
+			local byteValue = buffer_readu8(sourceBuffer, cursor)
+			cursor += 1
+			local mask = 1
+			for bitIdx = 1, remainder do
+				arrayResult[elementPointer + bitIdx - 1] = bit_btest(byteValue, mask)
+				mask = bit_lshift(mask, 1)
+			end
+		end
+		reader.cursor = cursor
+		return arrayResult
+	elseif tagByte == TAG_ARR_STR then
+		local count = readVariableInteger(reader)
+		local availableBytes = reader.len - reader.cursor
+		if count > availableBytes then count = availableBytes end
+		if count <= 0 then return {} end
+		local arrayResult = table_create(count)
+		local cursor = reader.cursor
+		local sourceBuffer = reader.buff
+		for index = 1, count do
+			if cursor >= reader.len then break end
+			local strLen = buffer_readu8(sourceBuffer, cursor)
+			cursor += 1
+			if cursor + strLen > reader.len then
+				strLen = math_max(0, reader.len - cursor)
+			end
+			arrayResult[index] = if strLen > 0 then buffer_readstring(sourceBuffer, cursor, strLen) else ""
+			cursor += strLen
+		end
+		reader.cursor = cursor
+		return arrayResult
+	elseif tagByte == TAG_ARR_COLOR3 then
+		local count = readVariableInteger(reader)
+		local availableElements = (reader.len - reader.cursor) // 3
+		if count > availableElements then count = availableElements end
+		if count <= 0 then return {} end
+		local arrayResult = table_create(count)
+		local cursor = reader.cursor
+		local sourceBuffer = reader.buff
+		for index = 1, count do
 			arrayResult[index] = Color3.fromRGB(
 				buffer_readu8(sourceBuffer, cursor),
 				buffer_readu8(sourceBuffer, cursor + 1),
@@ -2281,49 +1634,12 @@ local function readAnyValue(reader: Reader, currentDepth: number): any
 	elseif tagByte == TAG_ARR_CF then
 		local count = readVariableInteger(reader)
 		local availableElements = (reader.len - reader.cursor) // 48
-		if count > availableElements then
-			count = availableElements
-		end
-		if count <= 0 then
-			return {}
-		end
+		if count > availableElements then count = availableElements end
+		if count <= 0 then return {} end
 		local arrayResult = table_create(count)
 		local cursor = reader.cursor
 		local sourceBuffer = reader.buff
-		local rem = count % 2
-		local unrolled = count - rem
-		for index = 1, unrolled, 2 do
-			arrayResult[index] = CFrame.new(
-				buffer_readf32(sourceBuffer, cursor),
-				buffer_readf32(sourceBuffer, cursor + 4),
-				buffer_readf32(sourceBuffer, cursor + 8),
-				buffer_readf32(sourceBuffer, cursor + 12),
-				buffer_readf32(sourceBuffer, cursor + 16),
-				buffer_readf32(sourceBuffer, cursor + 20),
-				buffer_readf32(sourceBuffer, cursor + 24),
-				buffer_readf32(sourceBuffer, cursor + 28),
-				buffer_readf32(sourceBuffer, cursor + 32),
-				buffer_readf32(sourceBuffer, cursor + 36),
-				buffer_readf32(sourceBuffer, cursor + 40),
-				buffer_readf32(sourceBuffer, cursor + 44)
-			)
-			arrayResult[index + 1] = CFrame.new(
-				buffer_readf32(sourceBuffer, cursor + 48),
-				buffer_readf32(sourceBuffer, cursor + 52),
-				buffer_readf32(sourceBuffer, cursor + 56),
-				buffer_readf32(sourceBuffer, cursor + 60),
-				buffer_readf32(sourceBuffer, cursor + 64),
-				buffer_readf32(sourceBuffer, cursor + 68),
-				buffer_readf32(sourceBuffer, cursor + 72),
-				buffer_readf32(sourceBuffer, cursor + 76),
-				buffer_readf32(sourceBuffer, cursor + 80),
-				buffer_readf32(sourceBuffer, cursor + 84),
-				buffer_readf32(sourceBuffer, cursor + 88),
-				buffer_readf32(sourceBuffer, cursor + 92)
-			)
-			cursor += 96
-		end
-		for index = unrolled + 1, count do
+		for index = 1, count do
 			arrayResult[index] = CFrame.new(
 				buffer_readf32(sourceBuffer, cursor),
 				buffer_readf32(sourceBuffer, cursor + 4),
@@ -2342,29 +1658,392 @@ local function readAnyValue(reader: Reader, currentDepth: number): any
 		end
 		reader.cursor = cursor
 		return arrayResult
+	elseif tagByte == TAG_MAP_STR_U8 then
+		local pairCount = readVariableInteger(reader)
+		local availableBytes = reader.len - reader.cursor
+		if pairCount > availableBytes then pairCount = availableBytes end
+		local mapResult = {}
+		local cursor = reader.cursor
+		local sourceBuffer = reader.buff
+		for _ = 1, pairCount do
+			if cursor >= reader.len then break end
+			local keyLength = buffer_readu8(sourceBuffer, cursor)
+			if cursor + 2 + keyLength > reader.len then break end
+			local keyString = buffer_readstring(sourceBuffer, cursor + 1, keyLength)
+			local valueU8 = buffer_readu8(sourceBuffer, cursor + 1 + keyLength)
+			mapResult[keyString] = valueU8
+			cursor += 2 + keyLength
+		end
+		reader.cursor = cursor
+		return mapResult
+	elseif tagByte == TAG_STR16 then
+		local cursor = reader.cursor
+		if cursor + 2 > reader.len then reader.cursor = reader.len; return "" end
+		local strLength = buffer_readu16(reader.buff, cursor)
+		cursor += 2
+		if cursor + strLength > reader.len then strLength = math_max(0, reader.len - cursor) end
+		reader.cursor = cursor + strLength
+		return if strLength > 0 then buffer_readstring(reader.buff, cursor, strLength) else ""
+	elseif tagByte == TAG_STR_VAR then
+		return readLengthPrefixedString(reader)
 	elseif tagByte == TAG_BUFFER then
 		local bufferBytesLength = readVariableInteger(reader)
 		local availableBytes = reader.len - reader.cursor
-		if bufferBytesLength > availableBytes then
-			bufferBytesLength = availableBytes
-		end
-		if bufferBytesLength <= 0 then
-			return buffer_create(0)
-		end
+		if bufferBytesLength > availableBytes then bufferBytesLength = availableBytes end
+		if bufferBytesLength <= 0 then return buffer_create(0) end
 		local cursor = reader.cursor
 		reader.cursor = cursor + bufferBytesLength
 		local extractedBuffer = buffer_create(bufferBytesLength)
 		buffer_copy(extractedBuffer, 0, reader.buff, cursor, bufferBytesLength)
 		return extractedBuffer
+	elseif tagByte == TAG_U24 then
+		local cursor = reader.cursor
+		if cursor + 3 > reader.len then reader.cursor = reader.len; return 0 end
+		reader.cursor = cursor + 3
+		return readUnsigned24(reader.buff, cursor)
+	elseif tagByte == TAG_I24 then
+		local cursor = reader.cursor
+		if cursor + 3 > reader.len then reader.cursor = reader.len; return 0 end
+		reader.cursor = cursor + 3
+		return readSigned24(reader.buff, cursor)
+	elseif tagByte == TAG_F16 then
+		local cursor = reader.cursor
+		if cursor + 2 > reader.len then reader.cursor = reader.len; return 0 end
+		reader.cursor = cursor + 2
+		return decodeFloat16(readFloat16Bytes(reader.buff, cursor))
+	elseif tagByte == TAG_F24 then
+		local cursor = reader.cursor
+		if cursor + 3 > reader.len then reader.cursor = reader.len; return 0 end
+		reader.cursor = cursor + 3
+		return decodeFloat24(readFloat24Bytes(reader.buff, cursor))
+	elseif tagByte == TAG_VEC3_F16 then
+		local cursor = reader.cursor
+		if cursor + 6 > reader.len then reader.cursor = reader.len; return Vector3.zero end
+		reader.cursor = cursor + 6
+		return Vector3.new(
+			decodeFloat16(readFloat16Bytes(reader.buff, cursor)),
+			decodeFloat16(readFloat16Bytes(reader.buff, cursor + 2)),
+			decodeFloat16(readFloat16Bytes(reader.buff, cursor + 4))
+		)
+	elseif tagByte == TAG_VEC2_F16 then
+		local cursor = reader.cursor
+		if cursor + 4 > reader.len then reader.cursor = reader.len; return Vector2.zero end
+		reader.cursor = cursor + 4
+		return Vector2.new(
+			decodeFloat16(readFloat16Bytes(reader.buff, cursor)),
+			decodeFloat16(readFloat16Bytes(reader.buff, cursor + 2))
+		)
+	elseif tagByte == TAG_CF_POS then
+		local cursor = reader.cursor
+		if cursor + 12 > reader.len then reader.cursor = reader.len; return CFrame.identity end
+		reader.cursor = cursor + 12
+		return CFrame.new(
+			buffer_readf32(reader.buff, cursor),
+			buffer_readf32(reader.buff, cursor + 4),
+			buffer_readf32(reader.buff, cursor + 8)
+		)
+	elseif tagByte == TAG_CF_YAW then
+		local cursor = reader.cursor
+		if cursor + 14 > reader.len then reader.cursor = reader.len; return CFrame.identity end
+		reader.cursor = cursor + 14
+		local position = Vector3.new(
+			buffer_readf32(reader.buff, cursor),
+			buffer_readf32(reader.buff, cursor + 4),
+			buffer_readf32(reader.buff, cursor + 8)
+		)
+		local normalizedYaw = (buffer_readu16(reader.buff, cursor + 12) / 65535) * (2 * math_pi)
+		return CFrame.Angles(0, normalizedYaw, 0) + position
+	elseif tagByte == TAG_UDIM then
+		local cursor = reader.cursor
+		if cursor + 6 > reader.len then reader.cursor = reader.len; return UDim.new() end
+		reader.cursor = cursor + 6
+		return UDim.new(buffer_readf32(reader.buff, cursor), buffer_readi16(reader.buff, cursor + 4))
+	elseif tagByte == TAG_UDIM2 then
+		local cursor = reader.cursor
+		if cursor + 12 > reader.len then reader.cursor = reader.len; return UDim2.new() end
+		reader.cursor = cursor + 12
+		return UDim2.new(
+			buffer_readf32(reader.buff, cursor),
+			buffer_readi16(reader.buff, cursor + 4),
+			buffer_readf32(reader.buff, cursor + 6),
+			buffer_readi16(reader.buff, cursor + 10)
+		)
+	elseif tagByte == TAG_INSTANCE then
+		return reader.insts[readVariableInteger(reader)]
+	elseif tagByte == TAG_ENUM_U8 then
+		local enumName = readLengthPrefixedString(reader)
+		local cursor = reader.cursor
+		if cursor >= reader.len then return nil end
+		local enumValue = buffer_readu8(reader.buff, cursor)
+		reader.cursor = cursor + 1
+		return getCachedEnumItem(enumName, enumValue)
+	elseif tagByte == TAG_ENUM then
+		local enumName = readLengthPrefixedString(reader)
+		local enumValue = readVariableInteger(reader)
+		return getCachedEnumItem(enumName, enumValue)
+	elseif tagByte == TAG_TWEEN then
+		local cursor = reader.cursor
+		if cursor + 15 > reader.len then reader.cursor = reader.len; return TweenInfo.new() end
+		reader.cursor = cursor + 15
+		local duration = buffer_readf32(reader.buff, cursor)
+		local styleValue = buffer_readu8(reader.buff, cursor + 4)
+		local directionValue = buffer_readu8(reader.buff, cursor + 5)
+		local repeatCount = buffer_readi32(reader.buff, cursor + 6)
+		local reverses = buffer_readu8(reader.buff, cursor + 10) == 1
+		local delayTime = buffer_readf32(reader.buff, cursor + 11)
+		local easingStyle: any = getCachedEnumItem("EasingStyle", styleValue) or Enum.EasingStyle.Quad
+		local easingDirection: any = getCachedEnumItem("EasingDirection", directionValue) or Enum.EasingDirection.Out
+		local isSuccess, createdTween =
+			pcall(TweenInfo.new, duration, easingStyle, easingDirection, repeatCount, reverses, delayTime)
+		return if isSuccess and createdTween then createdTween else TweenInfo.new()
+	elseif tagByte == TAG_BRICKCOLOR then
+		local cursor = reader.cursor
+		if cursor + 2 > reader.len then reader.cursor = reader.len; return BrickColor.new(1) end
+		reader.cursor = cursor + 2
+		return BrickColor.new(buffer_readu16(reader.buff, cursor))
+	elseif tagByte == TAG_COLOR_SEQ then
+		local cursor = reader.cursor
+		if cursor >= reader.len then return ColorSequence.new(Color3.new(1, 1, 1)) end
+		local keypointCount = buffer_readu8(reader.buff, cursor)
+		cursor += 1
+		local keypointList = table_create(keypointCount) :: { ColorSequenceKeypoint }
+		for i = 1, keypointCount do
+			if cursor + 7 > reader.len then break end
+			local timePosition = buffer_readf32(reader.buff, cursor)
+			local colorR = buffer_readu8(reader.buff, cursor + 4)
+			local colorG = buffer_readu8(reader.buff, cursor + 5)
+			local colorB = buffer_readu8(reader.buff, cursor + 6)
+			keypointList[i] = ColorSequenceKeypoint.new(timePosition, Color3.fromRGB(colorR, colorG, colorB))
+			cursor += 7
+		end
+		reader.cursor = cursor
+		if #keypointList >= 2 then
+			local isSuccess, sequence = pcall(function()
+				return ColorSequence.new(keypointList)
+			end)
+			if isSuccess and sequence then return sequence end
+		end
+		return ColorSequence.new(Color3.new(1, 1, 1))
+	elseif tagByte == TAG_COLOR_SEQ_KP then
+		local cursor = reader.cursor
+		if cursor + 7 > reader.len then reader.cursor = reader.len; return ColorSequenceKeypoint.new(0, Color3.new(1, 1, 1)) end
+		reader.cursor = cursor + 7
+		local timePosition = buffer_readf32(reader.buff, cursor)
+		local colorR = buffer_readu8(reader.buff, cursor + 4)
+		local colorG = buffer_readu8(reader.buff, cursor + 5)
+		local colorB = buffer_readu8(reader.buff, cursor + 6)
+		local isSuccess, keypoint = pcall(ColorSequenceKeypoint.new, timePosition, Color3.fromRGB(colorR, colorG, colorB))
+		return if isSuccess and keypoint then keypoint else ColorSequenceKeypoint.new(0, Color3.new(1, 1, 1))
+	elseif tagByte == TAG_NUM_RANGE then
+		local cursor = reader.cursor
+		if cursor + 8 > reader.len then reader.cursor = reader.len; return NumberRange.new(0, 0) end
+		reader.cursor = cursor + 8
+		local minimumValue = buffer_readf32(reader.buff, cursor)
+		local maximumValue = buffer_readf32(reader.buff, cursor + 4)
+		if minimumValue > maximumValue then return NumberRange.new(maximumValue, minimumValue) end
+		return NumberRange.new(minimumValue, maximumValue)
+	elseif tagByte == TAG_NUM_SEQ then
+		local cursor = reader.cursor
+		if cursor >= reader.len then return NumberSequence.new(0) end
+		local keypointCount = buffer_readu8(reader.buff, cursor)
+		cursor += 1
+		local keypointList = table_create(keypointCount) :: { NumberSequenceKeypoint }
+		for i = 1, keypointCount do
+			if cursor + 12 > reader.len then break end
+			local timePosition = buffer_readf32(reader.buff, cursor)
+			local value = buffer_readf32(reader.buff, cursor + 4)
+			local envelope = buffer_readf32(reader.buff, cursor + 8)
+			keypointList[i] = NumberSequenceKeypoint.new(timePosition, value, envelope)
+			cursor += 12
+		end
+		reader.cursor = cursor
+		if #keypointList >= 2 then
+			local isSuccess, sequence = pcall(function()
+				return NumberSequence.new(keypointList)
+			end)
+			if isSuccess and sequence then return sequence end
+		end
+		return NumberSequence.new(0)
+	elseif tagByte == TAG_NUM_SEQ_KP then
+		local cursor = reader.cursor
+		if cursor + 12 > reader.len then reader.cursor = reader.len; return NumberSequenceKeypoint.new(0, 0, 0) end
+		reader.cursor = cursor + 12
+		local timePosition = buffer_readf32(reader.buff, cursor)
+		local value = buffer_readf32(reader.buff, cursor + 4)
+		local envelope = buffer_readf32(reader.buff, cursor + 8)
+		local isSuccess, keypoint = pcall(NumberSequenceKeypoint.new, timePosition, value, envelope)
+		return if isSuccess and keypoint then keypoint else NumberSequenceKeypoint.new(0, 0, 0)
+	elseif tagByte == TAG_REGION3 then
+		local cursor = reader.cursor
+		if cursor + 24 > reader.len then reader.cursor = reader.len; return Region3.new(Vector3.zero, Vector3.zero) end
+		reader.cursor = cursor + 24
+		local minPosition = Vector3.new(
+			buffer_readf32(reader.buff, cursor),
+			buffer_readf32(reader.buff, cursor + 4),
+			buffer_readf32(reader.buff, cursor + 8)
+		)
+		local maxPosition = Vector3.new(
+			buffer_readf32(reader.buff, cursor + 12),
+			buffer_readf32(reader.buff, cursor + 16),
+			buffer_readf32(reader.buff, cursor + 20)
+		)
+		return Region3.new(minPosition, maxPosition)
+	elseif tagByte == TAG_REGION3I16 then
+		local cursor = reader.cursor
+		if cursor + 12 > reader.len then reader.cursor = reader.len; return Region3int16.new(Vector3int16.new(), Vector3int16.new()) end
+		reader.cursor = cursor + 12
+		local minCoords = Vector3int16.new(
+			buffer_readi16(reader.buff, cursor),
+			buffer_readi16(reader.buff, cursor + 2),
+			buffer_readi16(reader.buff, cursor + 4)
+		)
+		local maxCoords = Vector3int16.new(
+			buffer_readi16(reader.buff, cursor + 6),
+			buffer_readi16(reader.buff, cursor + 8),
+			buffer_readi16(reader.buff, cursor + 10)
+		)
+		return Region3int16.new(minCoords, maxCoords)
+	elseif tagByte == TAG_VEC2I16 then
+		local cursor = reader.cursor
+		if cursor + 4 > reader.len then reader.cursor = reader.len; return Vector2int16.new() end
+		reader.cursor = cursor + 4
+		return Vector2int16.new(buffer_readi16(reader.buff, cursor), buffer_readi16(reader.buff, cursor + 2))
+	elseif tagByte == TAG_VEC3I16 then
+		local cursor = reader.cursor
+		if cursor + 6 > reader.len then reader.cursor = reader.len; return Vector3int16.new() end
+		reader.cursor = cursor + 6
+		return Vector3int16.new(
+			buffer_readi16(reader.buff, cursor),
+			buffer_readi16(reader.buff, cursor + 2),
+			buffer_readi16(reader.buff, cursor + 4)
+		)
+	elseif tagByte == TAG_RECT then
+		local cursor = reader.cursor
+		if cursor + 16 > reader.len then reader.cursor = reader.len; return Rect.new(0, 0, 0, 0) end
+		reader.cursor = cursor + 16
+		return Rect.new(
+			buffer_readf32(reader.buff, cursor),
+			buffer_readf32(reader.buff, cursor + 4),
+			buffer_readf32(reader.buff, cursor + 8),
+			buffer_readf32(reader.buff, cursor + 12)
+		)
+	elseif tagByte == TAG_DATETIME then
+		local cursor = reader.cursor
+		if cursor + 8 > reader.len then reader.cursor = reader.len; return DateTime.fromUnixTimestampMillis(0) end
+		reader.cursor = cursor + 8
+		local timestampMilliseconds = buffer_readf64(reader.buff, cursor)
+		if
+			timestampMilliseconds ~= timestampMilliseconds
+			or timestampMilliseconds < -17987443200000
+			or timestampMilliseconds > 253402300799999
+		then
+			return DateTime.fromUnixTimestampMillis(0)
+		end
+		return DateTime.fromUnixTimestampMillis(timestampMilliseconds)
+	elseif tagByte == TAG_RAY then
+		local cursor = reader.cursor
+		if cursor + 24 > reader.len then reader.cursor = reader.len; return Ray.new(Vector3.zero, Vector3.zero) end
+		reader.cursor = cursor + 24
+		local originPosition = Vector3.new(
+			buffer_readf32(reader.buff, cursor),
+			buffer_readf32(reader.buff, cursor + 4),
+			buffer_readf32(reader.buff, cursor + 8)
+		)
+		local directionVector = Vector3.new(
+			buffer_readf32(reader.buff, cursor + 12),
+			buffer_readf32(reader.buff, cursor + 16),
+			buffer_readf32(reader.buff, cursor + 20)
+		)
+		return Ray.new(originPosition, directionVector)
+	elseif tagByte == TAG_ARR_I8 then
+		local count = readVariableInteger(reader)
+		local availableBytes = reader.len - reader.cursor
+		if count > availableBytes then count = availableBytes end
+		if count <= 0 then return {} end
+		local arrayResult = table_create(count)
+		local cursor = reader.cursor
+		for index = 1, count do
+			arrayResult[index] = buffer_readi8(reader.buff, cursor)
+			cursor += 1
+		end
+		reader.cursor = cursor
+		return arrayResult
+	elseif tagByte == TAG_ARR_U16 then
+		local count = readVariableInteger(reader)
+		local availableElements = (reader.len - reader.cursor) // 2
+		if count > availableElements then count = availableElements end
+		if count <= 0 then return {} end
+		local arrayResult = table_create(count)
+		local cursor = reader.cursor
+		for index = 1, count do
+			arrayResult[index] = buffer_readu16(reader.buff, cursor)
+			cursor += 2
+		end
+		reader.cursor = cursor
+		return arrayResult
+	elseif tagByte == TAG_ARR_I16 then
+		local count = readVariableInteger(reader)
+		local availableElements = (reader.len - reader.cursor) // 2
+		if count > availableElements then count = availableElements end
+		if count <= 0 then return {} end
+		local arrayResult = table_create(count)
+		local cursor = reader.cursor
+		for index = 1, count do
+			arrayResult[index] = buffer_readi16(reader.buff, cursor)
+			cursor += 2
+		end
+		reader.cursor = cursor
+		return arrayResult
+	elseif tagByte == TAG_ARR_U32 then
+		local count = readVariableInteger(reader)
+		local availableElements = (reader.len - reader.cursor) // 4
+		if count > availableElements then count = availableElements end
+		if count <= 0 then return {} end
+		local arrayResult = table_create(count)
+		local cursor = reader.cursor
+		for index = 1, count do
+			arrayResult[index] = buffer_readu32(reader.buff, cursor)
+			cursor += 4
+		end
+		reader.cursor = cursor
+		return arrayResult
+	elseif tagByte == TAG_ARR_I32 then
+		local count = readVariableInteger(reader)
+		local availableElements = (reader.len - reader.cursor) // 4
+		if count > availableElements then count = availableElements end
+		if count <= 0 then return {} end
+		local arrayResult = table_create(count)
+		local cursor = reader.cursor
+		for index = 1, count do
+			arrayResult[index] = buffer_readi32(reader.buff, cursor)
+			cursor += 4
+		end
+		reader.cursor = cursor
+		return arrayResult
+	elseif tagByte == TAG_ARR_F64 then
+		local count = readVariableInteger(reader)
+		local availableElements = (reader.len - reader.cursor) // 8
+		if count > availableElements then count = availableElements end
+		if count <= 0 then return {} end
+		local arrayResult = table_create(count)
+		local cursor = reader.cursor
+		for index = 1, count do
+			arrayResult[index] = buffer_readf64(reader.buff, cursor)
+			cursor += 8
+		end
+		reader.cursor = cursor
+		return arrayResult
 	end
-	local specificHandler = DeserializerHandlers[tagByte]
-	return if specificHandler then specificHandler(reader) else nil
+
+	return nil
 end
+
 function Buffers.WriteU16(writer: Writer, integerValue: number)
 	ensureCapacity(writer, 2)
 	buffer_writeu16(writer.buff, writer.cursor, integerValue)
 	writer.cursor += 2
 end
+
 function Buffers.ReadU16(reader: Reader): number
 	local cursor = reader.cursor
 	if cursor + 2 > reader.len then
@@ -2374,6 +2053,7 @@ function Buffers.ReadU16(reader: Reader): number
 	reader.cursor = cursor + 2
 	return buffer_readu16(reader.buff, cursor)
 end
+
 function Buffers.WritePacketHeader(writer: Writer, packetType: number, argumentCount: number)
 	ensureCapacity(writer, if argumentCount < 63 then 1 else 6)
 	if argumentCount < 63 then
@@ -2385,6 +2065,7 @@ function Buffers.WritePacketHeader(writer: Writer, packetType: number, argumentC
 		writeVariableInteger(writer, argumentCount)
 	end
 end
+
 function Buffers.ReadPacketHeader(reader: Reader): (number, number)
 	local cursor = reader.cursor
 	if cursor >= reader.len then
@@ -2399,6 +2080,7 @@ function Buffers.ReadPacketHeader(reader: Reader): (number, number)
 	end
 	return packetType, argumentCount
 end
+
 function Buffers.WriteEventHeader(writer: Writer, channelHash: number, packetType: number, argumentCount: number)
 	assert(packetType >= 0 and packetType <= 3, "Jolt: packetType must be 0-3")
 	if argumentCount < 63 then
@@ -2414,6 +2096,7 @@ function Buffers.WriteEventHeader(writer: Writer, channelHash: number, packetTyp
 		writeVariableInteger(writer, argumentCount)
 	end
 end
+
 function Buffers.ReadEventHeader(reader: Reader): (number, number, number)
 	local cursor = reader.cursor
 	if cursor + 3 > reader.len then
@@ -2430,6 +2113,7 @@ function Buffers.ReadEventHeader(reader: Reader): (number, number, number)
 	end
 	return channelHash, packetType, argumentCount
 end
+
 function Buffers.CreateWriter(capacity: number?): Writer
 	local poolCount = #WRITER_POOL
 	if poolCount > 0 then
@@ -2447,6 +2131,7 @@ function Buffers.CreateWriter(capacity: number?): Writer
 		insts = {},
 	}
 end
+
 function Buffers.CreateReader(rawBuffer: buffer, instanceList: { Instance }?): Reader
 	local poolCount = #READER_POOL
 	if poolCount > 0 then
@@ -2465,27 +2150,38 @@ function Buffers.CreateReader(rawBuffer: buffer, instanceList: { Instance }?): R
 		insts = instanceList or {},
 	}
 end
+
 function Buffers.FreeWriter(writer: Writer)
 	table_clear(writer.insts)
 	if writer.len <= MAX_POOLED_BUFFER_SIZE and #WRITER_POOL < MAX_POOL_CAPACITY then
 		WRITER_POOL[#WRITER_POOL + 1] = writer
 	end
 end
+
 function Buffers.FreeReader(reader: Reader)
-	reader.insts = {}
+	reader.buff = DUMMY_BUFFER
+	table_clear(reader.insts)
 	if #READER_POOL < MAX_POOL_CAPACITY then
 		READER_POOL[#READER_POOL + 1] = reader
 	end
 end
+
 function Buffers.Finalize(writer: Writer): (buffer, { Instance }?)
 	local finalizedBuffer = buffer_create(writer.cursor)
 	buffer_copy(finalizedBuffer, 0, writer.buff, 0, writer.cursor)
-	return finalizedBuffer, if #writer.insts > 0 then writer.insts else nil
+	local instances = if #writer.insts > 0 then writer.insts else nil
+	if instances ~= nil then
+		writer.insts = {}
+	end
+	return finalizedBuffer, instances
 end
+
 function Buffers.WriteAny(writer: Writer, targetValue: any, currentDepth: number?)
 	writeAnyValue(writer, targetValue, currentDepth or 0)
 end
+
 function Buffers.ReadAny(reader: Reader): any
 	return readAnyValue(reader, 0)
 end
+
 return Buffers

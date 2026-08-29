@@ -38,8 +38,12 @@ Signal.__index = Signal
 local nodePool: { SignalNode } = {}
 local MAX_NODE_POOL_SIZE = 512
 
+local task_spawn = task.spawn
+local coroutine_running = coroutine.running
+local coroutine_yield = coroutine.yield
+
 local function dispatch(eventCallback: (...any) -> (), ...: any)
-	task.spawn(eventCallback, ...)
+	task_spawn(eventCallback, ...)
 end
 
 function Connection.Disconnect(self: any)
@@ -68,6 +72,7 @@ function Connection.Disconnect(self: any)
 	end
 
 	node._prev = nil
+	node._next = nil
 	node._callback = nil :: any
 	node._signal = nil :: any
 
@@ -152,17 +157,17 @@ end
 
 function Signal:Wait(): ...any
 	local selfSignal = self :: Signal
-	local callingThread = coroutine.running()
+	local callingThread = coroutine_running()
 	local connection: Connection
 
 	connection = selfSignal:Connect(function(...)
 		if connection.Connected then
 			connection:Disconnect()
 		end
-		task.spawn(callingThread, ...)
+		task_spawn(callingThread, ...)
 	end)
 
-	return coroutine.yield()
+	return coroutine_yield()
 end
 
 function Signal:DisconnectAll()
@@ -173,6 +178,7 @@ function Signal:DisconnectAll()
 		local nextNode = currentNode._next
 		currentNode.Connected = false
 		currentNode._prev = nil
+		currentNode._next = nil
 		currentNode._callback = nil :: any
 		currentNode._signal = nil :: any
 
