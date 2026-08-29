@@ -25,6 +25,15 @@ It utilizes 16-bit FNV-1a channel hashing, packed binary buffers, doubly-linked 
 
 ## Installation
 
+### Wally
+Add `Jolt` to your `wally.toml` dependencies:
+
+```toml
+[dependencies]
+Jolt = "toriumslurs/jolt@4.0.0"
+```
+
+### Manual Installation
 Place the `Jolt` module folder inside `ReplicatedStorage` (or your shared dependency directory).
 
 ```lua
