@@ -1,8 +1,4 @@
 --!strict
---[=[
-	Jolt 4.2.0 (Optimized & Hardened)
-	High-performance binary networking library for Roblox.
-]=]
 
 local RunService = game:GetService("RunService")
 
