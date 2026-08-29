@@ -20,7 +20,8 @@ function Remotes.Get(): RemoteGroup
 	end
 
 	local reliableEvent = script:FindFirstChild(RELIABLE_REMOTE_NAME) or script:WaitForChild(RELIABLE_REMOTE_NAME, 10)
-	local unreliableEvent = script:FindFirstChild(UNRELIABLE_REMOTE_NAME) or script:WaitForChild(UNRELIABLE_REMOTE_NAME, 10)
+	local unreliableEvent = script:FindFirstChild(UNRELIABLE_REMOTE_NAME)
+		or script:WaitForChild(UNRELIABLE_REMOTE_NAME, 10)
 
 	if not reliableEvent or not unreliableEvent then
 		error("Jolt: RemoteEvents under Jolt.Utils.Remotes timed out during client initialization.", 2)

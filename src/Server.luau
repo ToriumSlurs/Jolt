@@ -163,12 +163,18 @@ local function onServerNetworkEvent(player: Player, rawBuffer: buffer, instanceL
 
 		if packetType == PACKET_EVENT then
 			channel._signal:Fire(player, Packet_ReadArguments(reader, argumentCount))
-
 		elseif packetType == PACKET_REQUEST then
 			local requestId = Buffers_ReadAny(reader)
 			local handler = channel.OnInvoke
 			if handler ~= nil then
-				task_spawn(handleIncomingRequest, handler, player, channelHash, requestId, Packet_ReadArguments(reader, argumentCount - 1))
+				task_spawn(
+					handleIncomingRequest,
+					handler,
+					player,
+					channelHash,
+					requestId,
+					Packet_ReadArguments(reader, argumentCount - 1)
+				)
 			else
 				for _ = 1, argumentCount - 1 do
 					if reader.cursor >= totalLength then
@@ -177,7 +183,6 @@ local function onServerNetworkEvent(player: Player, rawBuffer: buffer, instanceL
 					Buffers_ReadAny(reader)
 				end
 			end
-
 		elseif packetType == PACKET_RESPONSE then
 			local requestId = Buffers_ReadAny(reader)
 			local statusValue = Buffers_ReadAny(reader)

@@ -73,12 +73,7 @@ local activeChannels: { [number]: Client<any, any> } = {}
 local reliableRemote: RemoteEvent
 local unreliableRemote: UnreliableRemoteEvent
 
-local function handleIncomingRequest(
-	channelHash: number,
-	requestId: any,
-	invokeHandler: (...any) -> ...any,
-	...: any
-)
+local function handleIncomingRequest(channelHash: number, requestId: any, invokeHandler: (...any) -> ...any, ...: any)
 	local invocationResults = table_pack(pcall(invokeHandler, ...))
 	local isSuccess = invocationResults[1]
 
@@ -151,12 +146,17 @@ local function onClientNetworkEvent(rawBuffer: buffer, instanceList: { Instance 
 
 		if packetType == PACKET_EVENT then
 			channel._signal:Fire(Packet_ReadArguments(reader, argumentCount))
-
 		elseif packetType == PACKET_REQUEST then
 			local requestId = Buffers_ReadAny(reader)
 			local handler = channel.OnInvoke
 			if handler ~= nil then
-				task_spawn(handleIncomingRequest, channelHash, requestId, handler, Packet_ReadArguments(reader, argumentCount - 1))
+				task_spawn(
+					handleIncomingRequest,
+					channelHash,
+					requestId,
+					handler,
+					Packet_ReadArguments(reader, argumentCount - 1)
+				)
 			else
 				for _ = 1, argumentCount - 1 do
 					if reader.cursor >= totalLength then
@@ -165,7 +165,6 @@ local function onClientNetworkEvent(rawBuffer: buffer, instanceList: { Instance 
 					Buffers_ReadAny(reader)
 				end
 			end
-
 		elseif packetType == PACKET_RESPONSE then
 			local requestId = Buffers_ReadAny(reader)
 			local statusValue = Buffers_ReadAny(reader)

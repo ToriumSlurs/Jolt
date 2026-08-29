@@ -125,11 +125,7 @@ local function decodeFloat16(float16Bits: number): number
 			return 0 / 0
 		end
 	end
-	local float32Bits = bit_bor(
-		bit_lshift(signBit, 31),
-		bit_lshift(exponent - 15 + 127, 23),
-		bit_lshift(fraction, 13)
-	)
+	local float32Bits = bit_bor(bit_lshift(signBit, 31), bit_lshift(exponent - 15 + 127, 23), bit_lshift(fraction, 13))
 	buffer_writeu32(scratchFloatConversionBuffer, 0, float32Bits)
 	return buffer_readf32(scratchFloatConversionBuffer, 0)
 end
@@ -371,7 +367,8 @@ DeserializerHandlers[TAG_TWEEN] = function(reader)
 	local delayTime = buffer_readf32(reader.buff, cursor + 12)
 	local easingStyle: any = getCachedEnumItem("EasingStyle", styleValue) or Enum.EasingStyle.Quad
 	local easingDirection: any = getCachedEnumItem("EasingDirection", directionValue) or Enum.EasingDirection.Out
-	local isSuccess, createdTween = pcall(TweenInfo.new, duration, easingStyle, easingDirection, repeatCount, reverses, delayTime)
+	local isSuccess, createdTween =
+		pcall(TweenInfo.new, duration, easingStyle, easingDirection, repeatCount, reverses, delayTime)
 	return if isSuccess and createdTween then createdTween else TweenInfo.new()
 end
 DeserializerHandlers[TAG_COLOR_SEQ] = function(reader)
@@ -395,7 +392,9 @@ DeserializerHandlers[TAG_COLOR_SEQ] = function(reader)
 	end
 	reader.cursor = cursor
 	if #keypointList >= 2 then
-		local isSuccess, sequence = pcall(function() return ColorSequence.new(keypointList) end)
+		local isSuccess, sequence = pcall(function()
+			return ColorSequence.new(keypointList)
+		end)
 		if isSuccess and sequence then
 			return sequence
 		end
@@ -450,7 +449,9 @@ DeserializerHandlers[TAG_NUM_SEQ] = function(reader)
 	end
 	reader.cursor = cursor
 	if #keypointList >= 2 then
-		local isSuccess, sequence = pcall(function() return NumberSequence.new(keypointList) end)
+		local isSuccess, sequence = pcall(function()
+			return NumberSequence.new(keypointList)
+		end)
 		if isSuccess and sequence then
 			return sequence
 		end
@@ -552,7 +553,11 @@ DeserializerHandlers[TAG_DATETIME] = function(reader)
 	end
 	reader.cursor = cursor + 8
 	local timestampMilliseconds = buffer_readf64(reader.buff, cursor)
-	if timestampMilliseconds ~= timestampMilliseconds or timestampMilliseconds < -17987443200000 or timestampMilliseconds > 253402300799999 then
+	if
+		timestampMilliseconds ~= timestampMilliseconds
+		or timestampMilliseconds < -17987443200000
+		or timestampMilliseconds > 253402300799999
+	then
 		return DateTime.fromUnixTimestampMillis(0)
 	end
 	return DateTime.fromUnixTimestampMillis(timestampMilliseconds)
@@ -687,7 +692,12 @@ local function writeCFrameArray(writer: Writer, targetTable: { [any]: any }, arr
 	end
 	writer.cursor = cursor
 end
-local function writeNumberArray(writer: Writer, targetTable: { [any]: any }, arrayLength: number, firstElement: number): boolean
+local function writeNumberArray(
+	writer: Writer,
+	targetTable: { [any]: any },
+	arrayLength: number,
+	firstElement: number
+): boolean
 	if firstElement % 1 == 0 then
 		if firstElement >= 0 and firstElement <= 255 then
 			ensureCapacity(writer, 7 + arrayLength)
@@ -926,7 +936,12 @@ local function writeStringArray(writer: Writer, targetTable: { [any]: any }, arr
 	end
 	writer.cursor = cursor
 end
-local function writeStructArray(writer: Writer, targetTable: { [any]: any }, arrayLength: number, firstRow: { [any]: any }): boolean
+local function writeStructArray(
+	writer: Writer,
+	targetTable: { [any]: any },
+	arrayLength: number,
+	firstRow: { [any]: any }
+): boolean
 	local columnKeys = {}
 	for key in pairs(firstRow) do
 		if type(key) == "string" then
@@ -935,7 +950,15 @@ local function writeStructArray(writer: Writer, targetTable: { [any]: any }, arr
 	end
 	table_sort(columnKeys)
 	local numCols = #columnKeys
-	if numCols == 6 and columnKeys[1] == "animation" and columnKeys[2] == "id" and columnKeys[3] == "orientation" and columnKeys[4] == "x" and columnKeys[5] == "y" and columnKeys[6] == "z" then
+	if
+		numCols == 6
+		and columnKeys[1] == "animation"
+		and columnKeys[2] == "id"
+		and columnKeys[3] == "orientation"
+		and columnKeys[4] == "x"
+		and columnKeys[5] == "y"
+		and columnKeys[6] == "z"
+	then
 		ensureCapacity(writer, 64 + arrayLength * 6)
 		local targetBuffer = writer.buff
 		local cursor = writer.cursor
@@ -977,7 +1000,20 @@ local function writeStructArray(writer: Writer, targetTable: { [any]: any }, arr
 		end
 		writer.cursor = cursor
 		return true
-	elseif numCols == 11 and columnKeys[1] == "animation" and columnKeys[2] == "health" and columnKeys[3] == "id" and columnKeys[4] == "qw" and columnKeys[5] == "qx" and columnKeys[6] == "qy" and columnKeys[7] == "qz" and columnKeys[8] == "team" and columnKeys[9] == "x" and columnKeys[10] == "y" and columnKeys[11] == "z" then
+	elseif
+		numCols == 11
+		and columnKeys[1] == "animation"
+		and columnKeys[2] == "health"
+		and columnKeys[3] == "id"
+		and columnKeys[4] == "qw"
+		and columnKeys[5] == "qx"
+		and columnKeys[6] == "qy"
+		and columnKeys[7] == "qz"
+		and columnKeys[8] == "team"
+		and columnKeys[9] == "x"
+		and columnKeys[10] == "y"
+		and columnKeys[11] == "z"
+	then
 		ensureCapacity(writer, 128 + arrayLength * 34)
 		local targetBuffer = writer.buff
 		local cursor = writer.cursor
@@ -1034,11 +1070,23 @@ local function writeStructArray(writer: Writer, targetTable: { [any]: any }, arr
 end
 local function writeDictionaryFast(writer: Writer, targetTable: { [any]: any }): boolean
 	local firstKey, firstVal = next(targetTable)
-	if type(firstKey) == "string" and type(firstVal) == "number" and firstVal >= 0 and firstVal <= 255 and firstVal % 1 == 0 then
+	if
+		type(firstKey) == "string"
+		and type(firstVal) == "number"
+		and firstVal >= 0
+		and firstVal <= 255
+		and firstVal % 1 == 0
+	then
 		local entryCount = 0
 		local allMatched = true
 		for mapKey, mapValue in pairs(targetTable) do
-			if type(mapKey) == "string" and type(mapValue) == "number" and mapValue >= 0 and mapValue <= 255 and mapValue % 1 == 0 then
+			if
+				type(mapKey) == "string"
+				and type(mapValue) == "number"
+				and mapValue >= 0
+				and mapValue <= 255
+				and mapValue % 1 == 0
+			then
 				entryCount += 1
 			else
 				allMatched = false
@@ -1796,10 +1844,7 @@ local function readAnyValue(reader: Reader, currentDepth: number): any
 			return Vector2.zero
 		end
 		reader.cursor = cursor + 8
-		return Vector2.new(
-			buffer_readf32(reader.buff, cursor),
-			buffer_readf32(reader.buff, cursor + 4)
-		)
+		return Vector2.new(buffer_readf32(reader.buff, cursor), buffer_readf32(reader.buff, cursor + 4))
 	elseif tagByte == TAG_VEC2_F16 then
 		local cursor = reader.cursor
 		if cursor + 4 > reader.len then
@@ -2131,7 +2176,9 @@ local function readAnyValue(reader: Reader, currentDepth: number): any
 		local cursor = reader.cursor
 		local sourceBuffer = reader.buff
 		for _ = 1, sixteenBitBlocks do
-			if cursor + 2 > reader.len then break end
+			if cursor + 2 > reader.len then
+				break
+			end
 			local b1 = byteToBooleanLookupTable[buffer_readu8(sourceBuffer, cursor)]
 			local b2 = byteToBooleanLookupTable[buffer_readu8(sourceBuffer, cursor + 1)]
 			cursor += 2
@@ -2192,7 +2239,9 @@ local function readAnyValue(reader: Reader, currentDepth: number): any
 		local rem = count % 4
 		local unrolled = count - rem
 		for index = 1, unrolled, 4 do
-			if cursor >= reader.len then break end
+			if cursor >= reader.len then
+				break
+			end
 			local l1 = buffer_readu8(sourceBuffer, cursor)
 			local s1 = buffer_readstring(sourceBuffer, cursor + 1, l1)
 			cursor += 1 + l1
@@ -2211,7 +2260,9 @@ local function readAnyValue(reader: Reader, currentDepth: number): any
 			arrayResult[index + 3] = s4
 		end
 		for index = unrolled + 1, count do
-			if cursor >= reader.len then break end
+			if cursor >= reader.len then
+				break
+			end
 			local l = buffer_readu8(sourceBuffer, cursor)
 			arrayResult[index] = buffer_readstring(sourceBuffer, cursor + 1, l)
 			cursor += 1 + l
@@ -2268,7 +2319,9 @@ local function readAnyValue(reader: Reader, currentDepth: number): any
 				and columnNames[6] == "z"
 			then
 				for rowIndex = 1, rowCount do
-					if cursor + 6 > reader.len then break end
+					if cursor + 6 > reader.len then
+						break
+					end
 					resultRows[rowIndex] = {
 						animation = buffer_readu8(sourceBuffer, cursor),
 						id = buffer_readu8(sourceBuffer, cursor + 1),
@@ -2287,7 +2340,9 @@ local function readAnyValue(reader: Reader, currentDepth: number): any
 				local key5 = columnNames[5]
 				local key6 = columnNames[6]
 				for rowIndex = 1, rowCount do
-					if cursor + 6 > reader.len then break end
+					if cursor + 6 > reader.len then
+						break
+					end
 					resultRows[rowIndex] = {
 						[key1] = buffer_readu8(sourceBuffer, cursor),
 						[key2] = buffer_readu8(sourceBuffer, cursor + 1),
@@ -2327,7 +2382,9 @@ local function readAnyValue(reader: Reader, currentDepth: number): any
 				and columnNames[11] == "z"
 			then
 				for rowIndex = 1, rowCount do
-					if cursor + 34 > reader.len then break end
+					if cursor + 34 > reader.len then
+						break
+					end
 					resultRows[rowIndex] = {
 						animation = buffer_readu8(sourceBuffer, cursor),
 						health = buffer_readu16(sourceBuffer, cursor + 1),
@@ -2356,7 +2413,9 @@ local function readAnyValue(reader: Reader, currentDepth: number): any
 				local key10 = columnNames[10]
 				local key11 = columnNames[11]
 				for rowIndex = 1, rowCount do
-					if cursor + 34 > reader.len then break end
+					if cursor + 34 > reader.len then
+						break
+					end
 					resultRows[rowIndex] = {
 						[key1] = buffer_readu8(sourceBuffer, cursor),
 						[key2] = buffer_readu16(sourceBuffer, cursor + 1),

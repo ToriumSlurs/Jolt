@@ -27,9 +27,18 @@ function Packet.ReadArguments(reader: Buffers.Reader, argumentCount: number): ..
 	elseif argumentCount == 4 then
 		return Buffers_ReadAny(reader), Buffers_ReadAny(reader), Buffers_ReadAny(reader), Buffers_ReadAny(reader)
 	elseif argumentCount == 5 then
-		return Buffers_ReadAny(reader), Buffers_ReadAny(reader), Buffers_ReadAny(reader), Buffers_ReadAny(reader), Buffers_ReadAny(reader)
+		return Buffers_ReadAny(reader),
+			Buffers_ReadAny(reader),
+			Buffers_ReadAny(reader),
+			Buffers_ReadAny(reader),
+			Buffers_ReadAny(reader)
 	elseif argumentCount == 6 then
-		return Buffers_ReadAny(reader), Buffers_ReadAny(reader), Buffers_ReadAny(reader), Buffers_ReadAny(reader), Buffers_ReadAny(reader), Buffers_ReadAny(reader)
+		return Buffers_ReadAny(reader),
+			Buffers_ReadAny(reader),
+			Buffers_ReadAny(reader),
+			Buffers_ReadAny(reader),
+			Buffers_ReadAny(reader),
+			Buffers_ReadAny(reader)
 	end
 
 	local clampedCount = if argumentCount > MAX_PACKET_ARGUMENTS then MAX_PACKET_ARGUMENTS else argumentCount

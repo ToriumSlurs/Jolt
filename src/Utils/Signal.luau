@@ -10,13 +10,16 @@ export type Connection = {
 local Connection = {}
 Connection.__index = Connection
 
-type SignalNode = typeof(setmetatable({} :: {
-	Connected: boolean,
-	_signal: Signal,
-	_callback: (...any) -> (),
-	_next: SignalNode?,
-	_prev: SignalNode?,
-}, Connection))
+type SignalNode = typeof(setmetatable(
+	{} :: {
+		Connected: boolean,
+		_signal: Signal,
+		_callback: (...any) -> (),
+		_next: SignalNode?,
+		_prev: SignalNode?,
+	},
+	Connection
+))
 
 export type Signal = {
 	Connect: (self: Signal, callback: (...any) -> ()) -> Connection,
