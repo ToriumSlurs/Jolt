@@ -29,16 +29,25 @@ local reliableRemote: RemoteEvent
 local unreliableRemote: UnreliableRemoteEvent
 local frameConnection: RBXScriptConnection?
 
+local isInitializing = false
+
 function Bridge.Initialize()
+	if (frameConnection and frameConnection.Connected) or isInitializing then
+		return
+	end
+	isInitializing = true
+
+	local remoteGroup = if IS_SERVER then Remotes.Create() else Remotes.Get()
+
 	if frameConnection and frameConnection.Connected then
+		isInitializing = false
 		return
 	end
 
-	local remoteGroup = if IS_SERVER then Remotes.Create() else Remotes.Get()
 	reliableRemote = remoteGroup.Reliable
 	unreliableRemote = remoteGroup.Unreliable
-
 	frameConnection = RunService.Heartbeat:Connect(Bridge.FlushAll)
+	isInitializing = false
 end
 
 function Bridge.FlushPlayer(player: Player)
@@ -130,6 +139,9 @@ function Bridge.ClientWriter(isReliable: boolean): Buffers.Writer
 			if not frameConnection then
 				Bridge.Initialize()
 			end
+			if clientReliableWriter ~= nil then
+				return clientReliableWriter
+			end
 			writer = Buffers_CreateWriter()
 			clientReliableWriter = writer
 		end
@@ -140,6 +152,9 @@ function Bridge.ClientWriter(isReliable: boolean): Buffers.Writer
 	if writer == nil then
 		if not frameConnection then
 			Bridge.Initialize()
+		end
+		if clientUnreliableWriter ~= nil then
+			return clientUnreliableWriter
 		end
 		writer = Buffers_CreateWriter()
 		clientUnreliableWriter = writer
@@ -156,6 +171,9 @@ function Bridge.Writer(isReliable: boolean, targetPlayer: Player?): Buffers.Writ
 				if not frameConnection then
 					Bridge.Initialize()
 				end
+				if writerMap[targetPlayer] ~= nil then
+					return writerMap[targetPlayer]
+				end
 				writer = Buffers_CreateWriter()
 				writerMap[targetPlayer] = writer
 			end
@@ -167,6 +185,9 @@ function Bridge.Writer(isReliable: boolean, targetPlayer: Player?): Buffers.Writ
 					if not frameConnection then
 						Bridge.Initialize()
 					end
+					if broadcastReliableWriter ~= nil then
+						return broadcastReliableWriter
+					end
 					writer = Buffers_CreateWriter()
 					broadcastReliableWriter = writer
 				end
@@ -176,6 +197,9 @@ function Bridge.Writer(isReliable: boolean, targetPlayer: Player?): Buffers.Writ
 				if writer == nil then
 					if not frameConnection then
 						Bridge.Initialize()
+					end
+					if broadcastUnreliableWriter ~= nil then
+						return broadcastUnreliableWriter
 					end
 					writer = Buffers_CreateWriter()
 					broadcastUnreliableWriter = writer

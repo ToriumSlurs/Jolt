@@ -1,6 +1,6 @@
 --!strict
 --[=[
-	Jolt 4.0.1
+	Jolt 4.1.0
 	High-performance binary networking library for Roblox.
 ]=]
 
@@ -9,8 +9,8 @@ local RunService = game:GetService("RunService")
 local IS_SERVER = RunService:IsServer()
 local IS_CLIENT = RunService:IsClient()
 
-local Client = require(script.Client)
-local Server = require(script.Server)
+local Client = if IS_CLIENT then require(script.Client) else nil :: any
+local Server = if IS_SERVER then require(script.Server) else nil :: any
 local Signal = require(script.Utils.Signal)
 local Constants = require(script.Utils.Constants)
 
@@ -43,7 +43,7 @@ export type Client<Args... = (...any), Out... = (...any)> = {
 }
 
 local Jolt = {
-	Version = "4.0.1",
+	Version = "4.1.0",
 }
 
 function Jolt.Server<Args..., Out...>(channelName: string): Server<Args..., Out...>

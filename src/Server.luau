@@ -42,6 +42,13 @@ local Hash_HashName = Hash.HashName
 local Packet_ReadArguments = Packet.ReadArguments
 local Packet_WriteEvent = Packet.WriteEvent
 
+local function processInvokeReturn(isSuccess: boolean, ...: any): ...any
+	if not isSuccess then
+		error(tostring((...)), 2)
+	end
+	return ...
+end
+
 type PendingRequest = {
 	callingThread: thread,
 	timeoutTimer: thread,
@@ -76,6 +83,7 @@ local reliableConnection: RBXScriptConnection?
 local unreliableConnection: RBXScriptConnection?
 local playerRemovingConnection: RBXScriptConnection?
 local activeChannels: { [number]: Server<any, any> } = {}
+local incomingRequestCounts: { [Player]: number } = {}
 
 local reliableRemote: RemoteEvent
 local unreliableRemote: UnreliableRemoteEvent
@@ -89,6 +97,11 @@ local function handleIncomingRequest(
 )
 	local invocationResults = table_pack(pcall(invokeHandler, player, ...))
 	local isSuccess = invocationResults[1]
+
+	local currentCount = incomingRequestCounts[player]
+	if currentCount then
+		incomingRequestCounts[player] = if currentCount <= 1 then nil else currentCount - 1
+	end
 
 	if player.Parent == nil or not player:IsDescendantOf(Players) then
 		return
@@ -125,17 +138,28 @@ local function onServerNetworkEvent(player: Player, rawBuffer: buffer, instanceL
 	if typeof(instanceList) == "table" then
 		local instanceCount = #instanceList
 		if instanceCount > 0 and instanceCount <= 256 then
-			local cleanList = table.create(instanceCount) :: { Instance }
-			local validCount = 0
+			local isClean = true
 			for index = 1, instanceCount do
-				local instanceItem = instanceList[index]
-				if typeof(instanceItem) == "Instance" then
-					validCount += 1
-					cleanList[validCount] = instanceItem
+				if typeof(instanceList[index]) ~= "Instance" then
+					isClean = false
+					break
 				end
 			end
-			if validCount > 0 then
-				validInstances = cleanList
+			if isClean then
+				validInstances = instanceList
+			else
+				local cleanList = table.create(instanceCount) :: { Instance }
+				local validCount = 0
+				for index = 1, instanceCount do
+					local instanceItem = instanceList[index]
+					if typeof(instanceItem) == "Instance" then
+						validCount += 1
+						cleanList[validCount] = instanceItem
+					end
+				end
+				if validCount > 0 then
+					validInstances = cleanList
+				end
 			end
 		end
 	end
@@ -143,60 +167,96 @@ local function onServerNetworkEvent(player: Player, rawBuffer: buffer, instanceL
 	local reader = Buffers_CreateReader(rawBuffer, validInstances)
 	local totalLength = reader.len
 
-	while reader.cursor < totalLength do
-		local channelHash, packetType, argumentCount = Buffers.ReadEventHeader(reader)
+	local parseSuccess, parseError = pcall(function()
+		while reader.cursor < totalLength do
+			local channelHash, packetType, argumentCount = Buffers.ReadEventHeader(reader)
 
-		if argumentCount > MAX_PACKET_ARGUMENTS or reader.cursor > totalLength then
-			break
-		end
-
-		local channel = activeChannels[channelHash]
-		if not channel then
-			for _ = 1, argumentCount do
-				if reader.cursor >= totalLength then
-					break
-				end
-				Buffers_ReadAny(reader)
+			if argumentCount > MAX_PACKET_ARGUMENTS or reader.cursor > totalLength then
+				break
 			end
-			continue
-		end
 
-		if packetType == PACKET_EVENT then
-			channel._signal:Fire(player, Packet_ReadArguments(reader, argumentCount))
-		elseif packetType == PACKET_REQUEST then
-			local requestId = Buffers_ReadAny(reader)
-			local handler = channel.OnInvoke
-			if handler ~= nil then
-				task_spawn(
-					handleIncomingRequest,
-					handler,
-					player,
-					channelHash,
-					requestId,
-					Packet_ReadArguments(reader, argumentCount - 1)
-				)
-			else
-				for _ = 1, argumentCount - 1 do
+			local channel = activeChannels[channelHash]
+			if not channel then
+				for _ = 1, argumentCount do
 					if reader.cursor >= totalLength then
 						break
 					end
 					Buffers_ReadAny(reader)
 				end
+				continue
 			end
-		elseif packetType == PACKET_RESPONSE then
-			local requestId = Buffers_ReadAny(reader)
-			local statusValue = Buffers_ReadAny(reader)
-			local isSuccess = statusValue == true or statusValue == 1
 
-			local playerRequestMap = channel._pendingRequests[player]
-			if playerRequestMap ~= nil and typeof(requestId) == "number" then
-				local pending = playerRequestMap[requestId]
-				if pending ~= nil then
-					playerRequestMap[requestId] = nil
-					channel._pendingCounts[player] = math_max(0, (channel._pendingCounts[player] or 1) - 1)
-					task_cancel(pending.timeoutTimer)
-					if coroutine_status(pending.callingThread) ~= "dead" then
-						task_spawn(pending.callingThread, isSuccess, Packet_ReadArguments(reader, argumentCount - 2))
+			if packetType == PACKET_EVENT then
+				channel._signal:Fire(player, Packet_ReadArguments(reader, argumentCount))
+			elseif packetType == PACKET_REQUEST then
+				if argumentCount < 1 then
+					continue
+				end
+				local requestId = Buffers_ReadAny(reader)
+				local handler = channel.OnInvoke
+				if handler ~= nil then
+					local currentIncoming = incomingRequestCounts[player] or 0
+					if currentIncoming >= MAX_PENDING_REQUESTS then
+						for _ = 1, argumentCount - 1 do
+							if reader.cursor >= totalLength then
+								break
+							end
+							Buffers_ReadAny(reader)
+						end
+					else
+						incomingRequestCounts[player] = currentIncoming + 1
+						task_spawn(
+							handleIncomingRequest,
+							handler,
+							player,
+							channelHash,
+							requestId,
+							Packet_ReadArguments(reader, argumentCount - 1)
+						)
+					end
+				else
+					for _ = 1, argumentCount - 1 do
+						if reader.cursor >= totalLength then
+							break
+						end
+						Buffers_ReadAny(reader)
+					end
+				end
+			elseif packetType == PACKET_RESPONSE then
+				if argumentCount < 2 then
+					for _ = 1, argumentCount do
+						if reader.cursor >= totalLength then
+							break
+						end
+						Buffers_ReadAny(reader)
+					end
+					continue
+				end
+				local requestId = Buffers_ReadAny(reader)
+				local statusValue = Buffers_ReadAny(reader)
+				local isSuccess = statusValue == true or statusValue == 1
+
+				local playerRequestMap = channel._pendingRequests[player]
+				if playerRequestMap ~= nil and typeof(requestId) == "number" then
+					local pending = playerRequestMap[requestId]
+					if pending ~= nil then
+						playerRequestMap[requestId] = nil
+						channel._pendingCounts[player] = math_max(0, (channel._pendingCounts[player] or 1) - 1)
+						task_cancel(pending.timeoutTimer)
+						if coroutine_status(pending.callingThread) ~= "dead" then
+							task_spawn(
+								pending.callingThread,
+								isSuccess,
+								Packet_ReadArguments(reader, argumentCount - 2)
+							)
+						else
+							for _ = 1, argumentCount - 2 do
+								if reader.cursor >= totalLength then
+									break
+								end
+								Buffers_ReadAny(reader)
+							end
+						end
 					else
 						for _ = 1, argumentCount - 2 do
 							if reader.cursor >= totalLength then
@@ -214,7 +274,7 @@ local function onServerNetworkEvent(player: Player, rawBuffer: buffer, instanceL
 					end
 				end
 			else
-				for _ = 1, argumentCount - 2 do
+				for _ = 1, argumentCount do
 					if reader.cursor >= totalLength then
 						break
 					end
@@ -222,7 +282,7 @@ local function onServerNetworkEvent(player: Player, rawBuffer: buffer, instanceL
 				end
 			end
 		end
-	end
+	end)
 
 	Buffers_FreeReader(reader)
 end
@@ -315,7 +375,7 @@ function Server:FireList(players: { Player }, ...: any)
 			local writer = Bridge_Writer(true, player)
 			local cursor = writer.cursor
 			if cursor + packetLength > writer.len then
-				local capacity = writer.len
+				local capacity = math_max(writer.len, 64)
 				local targetCapacity = cursor + packetLength
 				while targetCapacity > capacity do
 					capacity *= 2
@@ -341,13 +401,11 @@ function Server:FireList(players: { Player }, ...: any)
 end
 
 function Server:FireExcept(exceptPlayer: Player, ...: any)
-	local playerList = {}
 	for _, player in Players:GetPlayers() do
 		if player ~= exceptPlayer then
-			table.insert(playerList, player)
+			self:Fire(player, ...)
 		end
 	end
-	self:FireList(playerList, ...)
 end
 
 function Server:Invoke(player: Player, ...: any): ...any
@@ -392,26 +450,7 @@ function Server:Invoke(player: Player, ...: any): ...any
 		timeoutTimer = timeoutTimer,
 	}
 
-	local isSuccess, argumentA, argumentB, argumentC, argumentD, argumentE, argumentF, argumentG = coroutine_yield()
-
-	if not isSuccess then
-		error(tostring(argumentA), 2)
-	end
-
-	if argumentG ~= nil then
-		return argumentA, argumentB, argumentC, argumentD, argumentE, argumentF, argumentG
-	elseif argumentF ~= nil then
-		return argumentA, argumentB, argumentC, argumentD, argumentE, argumentF
-	elseif argumentE ~= nil then
-		return argumentA, argumentB, argumentC, argumentD, argumentE
-	elseif argumentD ~= nil then
-		return argumentA, argumentB, argumentC, argumentD
-	elseif argumentC ~= nil then
-		return argumentA, argumentB, argumentC
-	elseif argumentB ~= nil then
-		return argumentA, argumentB
-	end
-	return argumentA
+	return processInvokeReturn(coroutine_yield())
 end
 
 function Server:Destroy()
@@ -461,6 +500,7 @@ function Server.Initialize()
 				channel._pendingCounts[leavingPlayer] = nil
 				channel._requestIdCounters[leavingPlayer] = nil
 			end
+			incomingRequestCounts[leavingPlayer] = nil
 		end)
 	end
 end

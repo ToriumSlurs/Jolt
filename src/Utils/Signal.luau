@@ -38,28 +38,8 @@ Signal.__index = Signal
 local nodePool: { SignalNode } = {}
 local MAX_NODE_POOL_SIZE = 512
 
-local freeRunnerThread: thread? = nil
-
-local function acquireRunnerThreadAndCallEventHandler(eventCallback: (...any) -> (), ...: any)
-	local acquiredRunnerThread = freeRunnerThread
-	freeRunnerThread = nil
-	eventCallback(...)
-	freeRunnerThread = acquiredRunnerThread
-end
-
-local function runEventHandlerInFreeThread(...)
-	acquireRunnerThreadAndCallEventHandler(...)
-	while true do
-		acquireRunnerThreadAndCallEventHandler(coroutine.yield())
-	end
-end
-
 local function dispatch(eventCallback: (...any) -> (), ...: any)
-	local acquiredRunnerThread = freeRunnerThread
-	if not acquiredRunnerThread then
-		freeRunnerThread = coroutine.create(runEventHandlerInFreeThread)
-	end
-	task.spawn(freeRunnerThread :: thread, eventCallback, ...)
+	task.spawn(eventCallback, ...)
 end
 
 function Connection.Disconnect(self: any)
@@ -87,7 +67,6 @@ function Connection.Disconnect(self: any)
 		node._next._prev = node._prev
 	end
 
-	node._next = nil
 	node._prev = nil
 	node._callback = nil :: any
 	node._signal = nil :: any
@@ -193,7 +172,6 @@ function Signal:DisconnectAll()
 	while currentNode ~= nil do
 		local nextNode = currentNode._next
 		currentNode.Connected = false
-		currentNode._next = nil
 		currentNode._prev = nil
 		currentNode._callback = nil :: any
 		currentNode._signal = nil :: any

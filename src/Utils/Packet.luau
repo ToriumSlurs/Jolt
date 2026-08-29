@@ -88,9 +88,8 @@ function Packet.WriteArguments(writer: Buffers.Writer, argumentCount: number, ..
 		Buffers_WriteAny(writer, argumentE, 0)
 		Buffers_WriteAny(writer, argumentF, 0)
 	elseif argumentCount > 6 then
-		local argumentList = { ... }
 		for index = 1, argumentCount do
-			Buffers_WriteAny(writer, argumentList[index], 0)
+			Buffers_WriteAny(writer, select(index, ...), 0)
 		end
 	end
 end

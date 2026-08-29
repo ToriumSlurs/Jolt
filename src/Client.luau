@@ -34,11 +34,19 @@ local Buffers_CreateReader = Buffers.CreateReader
 local Buffers_FreeReader = Buffers.FreeReader
 local Buffers_WriteU16 = Buffers.WriteU16
 local Buffers_WritePacketHeader = Buffers.WritePacketHeader
+local Buffers_ReadEventHeader = Buffers.ReadEventHeader
 local Buffers_WriteAny = Buffers.WriteAny
 local Bridge_ClientWriter = Bridge.ClientWriter
 local Hash_HashName = Hash.HashName
 local Packet_ReadArguments = Packet.ReadArguments
 local Packet_WriteEvent = Packet.WriteEvent
+
+local function processInvokeReturn(isSuccess: boolean, ...: any): ...any
+	if not isSuccess then
+		error(tostring((...)), 2)
+	end
+	return ...
+end
 
 type PendingRequest = {
 	callingThread: thread,
@@ -108,17 +116,28 @@ local function onClientNetworkEvent(rawBuffer: buffer, instanceList: { Instance 
 	if typeof(instanceList) == "table" then
 		local instanceCount = #instanceList
 		if instanceCount > 0 and instanceCount <= 256 then
-			local cleanList = table.create(instanceCount) :: { Instance }
-			local validCount = 0
+			local isClean = true
 			for index = 1, instanceCount do
-				local instanceItem = instanceList[index]
-				if typeof(instanceItem) == "Instance" then
-					validCount += 1
-					cleanList[validCount] = instanceItem
+				if typeof(instanceList[index]) ~= "Instance" then
+					isClean = false
+					break
 				end
 			end
-			if validCount > 0 then
-				validInstances = cleanList
+			if isClean then
+				validInstances = instanceList
+			else
+				local cleanList = table.create(instanceCount) :: { Instance }
+				local validCount = 0
+				for index = 1, instanceCount do
+					local instanceItem = instanceList[index]
+					if typeof(instanceItem) == "Instance" then
+						validCount += 1
+						cleanList[validCount] = instanceItem
+					end
+				end
+				if validCount > 0 then
+					validInstances = cleanList
+				end
 			end
 		end
 	end
@@ -126,58 +145,83 @@ local function onClientNetworkEvent(rawBuffer: buffer, instanceList: { Instance 
 	local reader = Buffers_CreateReader(rawBuffer, validInstances)
 	local totalLength = reader.len
 
-	while reader.cursor < totalLength do
-		local channelHash, packetType, argumentCount = Buffers.ReadEventHeader(reader)
+	local parseSuccess, parseError = pcall(function()
+		while reader.cursor < totalLength do
+			local channelHash, packetType, argumentCount = Buffers_ReadEventHeader(reader)
 
-		if argumentCount > MAX_PACKET_ARGUMENTS or reader.cursor > totalLength then
-			break
-		end
-
-		local channel = activeChannels[channelHash]
-		if not channel then
-			for _ = 1, argumentCount do
-				if reader.cursor >= totalLength then
-					break
-				end
-				Buffers_ReadAny(reader)
+			if argumentCount > MAX_PACKET_ARGUMENTS or reader.cursor > totalLength then
+				break
 			end
-			continue
-		end
 
-		if packetType == PACKET_EVENT then
-			channel._signal:Fire(Packet_ReadArguments(reader, argumentCount))
-		elseif packetType == PACKET_REQUEST then
-			local requestId = Buffers_ReadAny(reader)
-			local handler = channel.OnInvoke
-			if handler ~= nil then
-				task_spawn(
-					handleIncomingRequest,
-					channelHash,
-					requestId,
-					handler,
-					Packet_ReadArguments(reader, argumentCount - 1)
-				)
-			else
-				for _ = 1, argumentCount - 1 do
+			local channel = activeChannels[channelHash]
+			if not channel then
+				for _ = 1, argumentCount do
 					if reader.cursor >= totalLength then
 						break
 					end
 					Buffers_ReadAny(reader)
 				end
+				continue
 			end
-		elseif packetType == PACKET_RESPONSE then
-			local requestId = Buffers_ReadAny(reader)
-			local statusValue = Buffers_ReadAny(reader)
-			local isSuccess = statusValue == true or statusValue == 1
 
-			if typeof(requestId) == "number" then
-				local pending = channel._pendingRequests[requestId]
-				if pending ~= nil then
-					channel._pendingRequests[requestId] = nil
-					channel._pendingCount = math_max(0, channel._pendingCount - 1)
-					task_cancel(pending.timeoutTimer)
-					if coroutine_status(pending.callingThread) ~= "dead" then
-						task_spawn(pending.callingThread, isSuccess, Packet_ReadArguments(reader, argumentCount - 2))
+			if packetType == PACKET_EVENT then
+				channel._signal:Fire(Packet_ReadArguments(reader, argumentCount))
+			elseif packetType == PACKET_REQUEST then
+				if argumentCount < 1 then
+					continue
+				end
+				local requestId = Buffers_ReadAny(reader)
+				local handler = channel.OnInvoke
+				if handler ~= nil then
+					task_spawn(
+						handleIncomingRequest,
+						channelHash,
+						requestId,
+						handler,
+						Packet_ReadArguments(reader, argumentCount - 1)
+					)
+				else
+					for _ = 1, argumentCount - 1 do
+						if reader.cursor >= totalLength then
+							break
+						end
+						Buffers_ReadAny(reader)
+					end
+				end
+			elseif packetType == PACKET_RESPONSE then
+				if argumentCount < 2 then
+					for _ = 1, argumentCount do
+						if reader.cursor >= totalLength then
+							break
+						end
+						Buffers_ReadAny(reader)
+					end
+					continue
+				end
+				local requestId = Buffers_ReadAny(reader)
+				local statusValue = Buffers_ReadAny(reader)
+				local isSuccess = statusValue == true or statusValue == 1
+
+				if typeof(requestId) == "number" then
+					local pending = channel._pendingRequests[requestId]
+					if pending ~= nil then
+						channel._pendingRequests[requestId] = nil
+						channel._pendingCount = math_max(0, channel._pendingCount - 1)
+						task_cancel(pending.timeoutTimer)
+						if coroutine_status(pending.callingThread) ~= "dead" then
+							task_spawn(
+								pending.callingThread,
+								isSuccess,
+								Packet_ReadArguments(reader, argumentCount - 2)
+							)
+						else
+							for _ = 1, argumentCount - 2 do
+								if reader.cursor >= totalLength then
+									break
+								end
+								Buffers_ReadAny(reader)
+							end
+						end
 					else
 						for _ = 1, argumentCount - 2 do
 							if reader.cursor >= totalLength then
@@ -195,7 +239,7 @@ local function onClientNetworkEvent(rawBuffer: buffer, instanceList: { Instance 
 					end
 				end
 			else
-				for _ = 1, argumentCount - 2 do
+				for _ = 1, argumentCount do
 					if reader.cursor >= totalLength then
 						break
 					end
@@ -203,7 +247,7 @@ local function onClientNetworkEvent(rawBuffer: buffer, instanceList: { Instance 
 				end
 			end
 		end
-	end
+	end)
 
 	Buffers_FreeReader(reader)
 end
@@ -287,26 +331,7 @@ function Client:Invoke(...: any): ...any
 		timeoutTimer = timeoutTimer,
 	}
 
-	local isSuccess, argumentA, argumentB, argumentC, argumentD, argumentE, argumentF, argumentG = coroutine_yield()
-
-	if not isSuccess then
-		error(tostring(argumentA), 2)
-	end
-
-	if argumentG ~= nil then
-		return argumentA, argumentB, argumentC, argumentD, argumentE, argumentF, argumentG
-	elseif argumentF ~= nil then
-		return argumentA, argumentB, argumentC, argumentD, argumentE, argumentF
-	elseif argumentE ~= nil then
-		return argumentA, argumentB, argumentC, argumentD, argumentE
-	elseif argumentD ~= nil then
-		return argumentA, argumentB, argumentC, argumentD
-	elseif argumentC ~= nil then
-		return argumentA, argumentB, argumentC
-	elseif argumentB ~= nil then
-		return argumentA, argumentB
-	end
-	return argumentA
+	return processInvokeReturn(coroutine_yield())
 end
 
 function Client:Destroy()
@@ -324,18 +349,27 @@ function Client:Destroy()
 	self._pendingCount = 0
 end
 
+local isClientInitializing = false
+
 function Client.Initialize()
-	if reliableConnection and reliableConnection.Connected then
+	if (reliableConnection and reliableConnection.Connected) or isClientInitializing then
 		return
 	end
+	isClientInitializing = true
 
 	Bridge.Initialize()
 	local remoteGroup = Remotes.Get()
+
+	if reliableConnection and reliableConnection.Connected then
+		isClientInitializing = false
+		return
+	end
+
 	reliableRemote = remoteGroup.Reliable
 	unreliableRemote = remoteGroup.Unreliable
-
 	reliableConnection = reliableRemote.OnClientEvent:Connect(onClientNetworkEvent)
 	unreliableConnection = unreliableRemote.OnClientEvent:Connect(onClientNetworkEvent)
+	isClientInitializing = false
 end
 
 return Client
