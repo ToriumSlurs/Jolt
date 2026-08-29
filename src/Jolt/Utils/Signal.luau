@@ -1,17 +1,22 @@
 --!strict
 --!native
 --!optimize 2
-local Signal = {}
-Signal.__index = Signal
 
 export type Connection = {
 	Disconnect: (self: Connection) -> (),
 	Connected: boolean,
+}
+
+local Connection = {}
+Connection.__index = Connection
+
+type SignalNode = typeof(setmetatable({} :: {
+	Connected: boolean,
 	_signal: Signal,
 	_callback: (...any) -> (),
-	_next: Connection?,
-	_prev: Connection?,
-}
+	_next: SignalNode?,
+	_prev: SignalNode?,
+}, Connection))
 
 export type Signal = {
 	Connect: (self: Signal, callback: (...any) -> ()) -> Connection,
@@ -19,159 +24,190 @@ export type Signal = {
 	Fire: (self: Signal, ...any) -> (),
 	Wait: (self: Signal) -> ...any,
 	DisconnectAll: (self: Signal) -> (),
-	_head: Connection?,
+	Destroy: (self: Signal) -> (),
+	_head: SignalNode?,
+	_tail: SignalNode?,
 }
 
-type InternalConnection = Connection & {
-	_signal: InternalSignal,
-	_next: InternalConnection?,
-	_prev: InternalConnection?,
-	_script: LuaSourceContainer?,
-}
+local Signal = {}
+Signal.__index = Signal
 
-type InternalSignal = Signal & {
-	_head: InternalConnection?,
-}
+local nodePool: { SignalNode } = {}
+local MAX_NODE_POOL_SIZE = 512
 
-local Connection = {}
-Connection.__index = Connection
+local freeRunnerThread: thread? = nil
 
-local function getScript(f: (...any) -> ...any): LuaSourceContainer?
-	local success, result = pcall(function()
-		return (getfenv(f) :: any).script
-	end)
-	return if success and typeof(result) == "Instance" and result:IsA("LuaSourceContainer") then result else nil
+local function acquireRunnerThreadAndCallEventHandler(eventCallback: (...any) -> (), ...: any)
+	local acquiredRunnerThread = freeRunnerThread
+	freeRunnerThread = nil
+	eventCallback(...)
+	freeRunnerThread = acquiredRunnerThread
 end
 
-function Connection:Disconnect()
-	local self = self :: InternalConnection
-	if not self.Connected then
+local function runEventHandlerInFreeThread(...)
+	acquireRunnerThreadAndCallEventHandler(...)
+	while true do
+		acquireRunnerThreadAndCallEventHandler(coroutine.yield())
+	end
+end
+
+local function dispatch(eventCallback: (...any) -> (), ...: any)
+	local acquiredRunnerThread = freeRunnerThread
+	if not acquiredRunnerThread then
+		freeRunnerThread = coroutine.create(runEventHandlerInFreeThread)
+	end
+	task.spawn(freeRunnerThread :: thread, eventCallback, ...)
+end
+
+function Connection.Disconnect(self: any)
+	local node: SignalNode = self
+	if not node.Connected then
 		return
 	end
-	self.Connected = false
+	node.Connected = false
 
-	self._script = nil
-
-	if self._signal._head == self then
-		self._signal._head = self._next
+	local parentSignal = node._signal
+	if parentSignal ~= nil then
+		if parentSignal._head == node then
+			parentSignal._head = node._next
+		end
+		if parentSignal._tail == node then
+			parentSignal._tail = node._prev
+		end
 	end
 
-	if self._prev then
-		self._prev._next = self._next
+	if node._prev ~= nil then
+		node._prev._next = node._next
 	end
 
-	if self._next then
-		self._next._prev = self._prev
+	if node._next ~= nil then
+		node._next._prev = node._prev
 	end
 
-	self._next = nil
-	self._prev = nil
-end
+	node._next = nil
+	node._prev = nil
+	node._callback = nil :: any
+	node._signal = nil :: any
 
-local function createConnection(signal: InternalSignal, callback: (...any) -> ()): InternalConnection
-	return setmetatable({
-		Connected = true,
-		_signal = signal,
-		_callback = callback,
-		_script = getScript(callback),
-		_next = nil,
-		_prev = nil,
-	}, Connection) :: any
-end
-
-local freeRunnerThread: thread?
-
-local function runHandler(callback: (...any) -> (), thread: thread, ...)
-	callback(...)
-	freeRunnerThread = thread
-end
-
-local function yieldLoop(callback: (...any) -> (), thread: thread, ...)
-	runHandler(callback, thread, ...)
-	while true do
-		runHandler(coroutine.yield())
+	if #nodePool < MAX_NODE_POOL_SIZE then
+		table.insert(nodePool, node)
 	end
 end
 
 function Signal.new(): Signal
 	return setmetatable({
 		_head = nil,
+		_tail = nil,
 	}, Signal) :: any
 end
 
 function Signal:Connect(callback: (...any) -> ()): Connection
-	local self = self :: InternalSignal
-	local connection = createConnection(self, callback)
+	local selfSignal = self :: Signal
+	local poolSize = #nodePool
+	local newNode: SignalNode
 
-	if self._head then
-		connection._next = self._head
-		self._head._prev = connection
+	if poolSize > 0 then
+		newNode = nodePool[poolSize]
+		nodePool[poolSize] = nil
+		newNode.Connected = true
+		newNode._signal = selfSignal
+		newNode._callback = callback
+		newNode._next = nil
+		newNode._prev = selfSignal._tail
+	else
+		newNode = setmetatable({
+			Connected = true,
+			_signal = selfSignal,
+			_callback = callback,
+			_next = nil,
+			_prev = selfSignal._tail,
+		}, Connection) :: any
 	end
-	self._head = connection
 
-	return connection
+	if selfSignal._tail ~= nil then
+		selfSignal._tail._next = newNode
+	else
+		selfSignal._head = newNode
+	end
+	selfSignal._tail = newNode
+
+	return newNode :: any
 end
 
 function Signal:Once(callback: (...any) -> ()): Connection
-	local self = self :: Signal
-	local connection: Connection?
-	connection = self:Connect(function(...)
-		if connection then
+	local selfSignal = self :: Signal
+	local connection: Connection
+
+	connection = selfSignal:Connect(function(...)
+		if connection.Connected then
 			connection:Disconnect()
 		end
 		callback(...)
 	end)
-	return connection :: Connection
+
+	return connection
 end
 
 function Signal:Fire(...: any)
-	local self = self :: InternalSignal
-	local item = self._head
-	while item do
-		local next = item._next
-		if item.Connected then
-			local s = item._script
-			if s and not s.Parent then
-				item:Disconnect()
-			else
-				local callback = item._callback
-				local thread = freeRunnerThread or coroutine.create(yieldLoop)
-				freeRunnerThread = nil
-				task.spawn(thread, callback, thread, ...)
-			end
+	local selfSignal = self :: Signal
+	local currentNode = selfSignal._head
+
+	if currentNode ~= nil and currentNode._next == nil then
+		if currentNode.Connected then
+			dispatch(currentNode._callback, ...)
 		end
-		item = next
+		return
+	end
+
+	while currentNode ~= nil do
+		local nextNode = currentNode._next
+		if currentNode.Connected then
+			dispatch(currentNode._callback, ...)
+		end
+		currentNode = nextNode
 	end
 end
 
 function Signal:Wait(): ...any
-	local self = self :: Signal
-	local thread = coroutine.running()
-	local connection: Connection?
-	connection = self:Connect(function(...)
-		if coroutine.status(thread) == "dead" then
-			if connection then
-				connection:Disconnect()
-			end
-			return
-		end
-		if connection then
+	local selfSignal = self :: Signal
+	local callingThread = coroutine.running()
+	local connection: Connection
+
+	connection = selfSignal:Connect(function(...)
+		if connection.Connected then
 			connection:Disconnect()
 		end
-		task.spawn(thread, ...)
+		task.spawn(callingThread, ...)
 	end)
+
 	return coroutine.yield()
 end
 
 function Signal:DisconnectAll()
-	local self = self :: InternalSignal
-	local item = self._head
-	while item do
-		local next = item._next
-		item:Disconnect()
-		item = next
+	local selfSignal = self :: Signal
+	local currentNode = selfSignal._head
+
+	while currentNode ~= nil do
+		local nextNode = currentNode._next
+		currentNode.Connected = false
+		currentNode._next = nil
+		currentNode._prev = nil
+		currentNode._callback = nil :: any
+		currentNode._signal = nil :: any
+
+		if #nodePool < MAX_NODE_POOL_SIZE then
+			table.insert(nodePool, currentNode)
+		end
+
+		currentNode = nextNode
 	end
-	self._head = nil
+
+	selfSignal._head = nil
+	selfSignal._tail = nil
+end
+
+function Signal:Destroy()
+	self:DisconnectAll()
 end
 
 return Signal

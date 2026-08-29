@@ -1,0 +1,16 @@
+--!strict
+--!native
+
+local Constants = {
+	VERSION = "4.0.0",
+	PACKET_EVENT = 1,
+	PACKET_REQUEST = 2,
+	PACKET_RESPONSE = 3,
+
+	REQUEST_TIMEOUT_SECONDS = 30,
+	MAX_PACKET_ARGUMENTS = 64,
+	MAX_PENDING_REQUESTS = 128,
+	MAX_RAW_BUFFER_SIZE = 262144,
+}
+
+return table.freeze(Constants)

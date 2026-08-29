@@ -1,244 +1,342 @@
 --!strict
 --!native
 --!optimize 2
-local Client = {}
-Client.__index = Client
 
-local Buffers = require("./Utils/Buffers")
-local Remotes = require("./Utils/Remotes")
-local Signal = require("./Utils/Signal")
-local Bridge = require("./Bridge")
+local Buffers = require(script.Parent.Utils.Buffers)
+local Remotes = require(script.Parent.Utils.Remotes)
+local Signal = require(script.Parent.Utils.Signal)
+local Bridge = require(script.Parent.Bridge)
+local Hash = require(script.Parent.Utils.Hash)
+local Constants = require(script.Parent.Utils.Constants)
+local Packet = require(script.Parent.Utils.Packet)
 
-local PACKET_EVENT = 1
-local PACKET_REQUEST = 2
-local PACKET_RESPONSE = 3
-local REQUEST_TIMEOUT = 60
+local PACKET_EVENT = Constants.PACKET_EVENT
+local PACKET_REQUEST = Constants.PACKET_REQUEST
+local PACKET_RESPONSE = Constants.PACKET_RESPONSE
+local REQUEST_TIMEOUT_SECONDS = Constants.REQUEST_TIMEOUT_SECONDS
+local MAX_PACKET_ARGUMENTS = Constants.MAX_PACKET_ARGUMENTS
+local MAX_PENDING_REQUESTS = Constants.MAX_PENDING_REQUESTS
+local MAX_RAW_BUFFER_SIZE = Constants.MAX_RAW_BUFFER_SIZE
 
 local task_spawn = task.spawn
 local task_delay = task.delay
 local task_cancel = task.cancel
 local coroutine_running = coroutine.running
 local coroutine_yield = coroutine.yield
-local table_unpack = table.unpack
+local coroutine_status = coroutine.status
+local table_pack = table.pack
+local math_max = math.max
 
-type Request = { thread: thread, timer: thread }
+local Buffers_ReadPacketHeader = Buffers.ReadPacketHeader
+local Buffers_ReadAny = Buffers.ReadAny
+local Buffers_ReadU16 = Buffers.ReadU16
+local Buffers_CreateReader = Buffers.CreateReader
+local Buffers_FreeReader = Buffers.FreeReader
+local Buffers_WriteU16 = Buffers.WriteU16
+local Buffers_WritePacketHeader = Buffers.WritePacketHeader
+local Buffers_WriteAny = Buffers.WriteAny
+local Bridge_ClientWriter = Bridge.ClientWriter
+local Hash_HashName = Hash.HashName
+local Packet_ReadArguments = Packet.ReadArguments
+local Packet_WriteEvent = Packet.WriteEvent
+
+type PendingRequest = {
+	callingThread: thread,
+	timeoutTimer: thread,
+}
 
 export type Client<Args... = (...any), Out... = (...any)> = {
+	_id: string,
+	_hash: number,
+	_signal: Signal.Signal,
+	_pendingRequests: { [number]: PendingRequest },
+	_pendingCount: number,
+	_requestIdCounter: number,
+	OnInvoke: ((Args...) -> Out...)?,
+
+	Connect: (self: Client<Args..., Out...>, callback: (Args...) -> ()) -> Signal.Connection,
+	Once: (self: Client<Args..., Out...>, callback: (Args...) -> ()) -> Signal.Connection,
+	Wait: (self: Client<Args..., Out...>) -> Args...,
 	Fire: (self: Client<Args..., Out...>, Args...) -> (),
 	FireUnreliable: (self: Client<Args..., Out...>, Args...) -> (),
 	Invoke: (self: Client<Args..., Out...>, Args...) -> Out...,
-	Connect: (self: Client<Args..., Out...>, callback: (Args...) -> ()) -> { Disconnect: () -> () },
-	Once: (self: Client<Args..., Out...>, callback: (Args...) -> ()) -> (),
-	Wait: (self: Client<Args..., Out...>) -> Args...,
-	OnInvoke: ((Args...) -> Out...)?,
+	Destroy: (self: Client<Args..., Out...>) -> (),
 }
 
-type InternalClient = {
-	_id: string,
-	_signal: Signal.Signal,
-	_requests: { [number]: Request },
-	_requestIdCounter: number,
-	OnInvoke: ((...any) -> ...any)?,
-}
+local Client = {}
+Client.__index = Client
 
-local ReliableConn: RBXScriptConnection?
-local UnreliableConn: RBXScriptConnection?
-local Instances: { [string]: InternalClient } = {}
+local reliableConnection: RBXScriptConnection?
+local unreliableConnection: RBXScriptConnection?
+local activeChannels: { [number]: Client<any, any> } = {}
 
-local reliable: RemoteEvent
-local unreliable: UnreliableRemoteEvent
+local reliableRemote: RemoteEvent
+local unreliableRemote: UnreliableRemoteEvent
 
-local function Initialize()
-	if ReliableConn and ReliableConn.Connected then
+local function handleIncomingRequest(
+	channelHash: number,
+	requestId: any,
+	invokeHandler: (...any) -> ...any,
+	...: any
+)
+	local invocationResults = table_pack(pcall(invokeHandler, ...))
+	local isSuccess = invocationResults[1]
+
+	local writer = Bridge_ClientWriter(true)
+	Buffers_WriteU16(writer, channelHash)
+
+	local responseArgCount = if isSuccess then invocationResults.n + 1 else 3
+	Buffers_WritePacketHeader(writer, PACKET_RESPONSE, responseArgCount)
+	Buffers_WriteAny(writer, requestId)
+	Buffers_WriteAny(writer, isSuccess)
+
+	if isSuccess then
+		for index = 2, invocationResults.n do
+			Buffers_WriteAny(writer, invocationResults[index])
+		end
+	else
+		Buffers_WriteAny(writer, tostring(invocationResults[2]))
+	end
+end
+
+local function onClientNetworkEvent(rawBuffer: buffer, instanceList: { Instance }?)
+	if typeof(rawBuffer) ~= "buffer" then
 		return
 	end
 
-	Bridge.Initialize()
-	local group = Remotes.Get()
-	reliable = group.Reliable
-	unreliable = group.Unreliable
+	local bufferLength = buffer.len(rawBuffer)
+	if bufferLength == 0 or bufferLength > MAX_RAW_BUFFER_SIZE then
+		return
+	end
 
-	local function dispatch(id: string, args: { any }, count: number)
-		local packetType = args[1]
-		local instance = Instances[id]
-		if not instance then
-			return
+	local validInstances: { Instance }? = nil
+	if typeof(instanceList) == "table" then
+		local instanceCount = #instanceList
+		if instanceCount > 0 and instanceCount <= 256 then
+			local cleanList = table.create(instanceCount) :: { Instance }
+			local validCount = 0
+			for index = 1, instanceCount do
+				local instanceItem = instanceList[index]
+				if typeof(instanceItem) == "Instance" then
+					validCount += 1
+					cleanList[validCount] = instanceItem
+				end
+			end
+			if validCount > 0 then
+				validInstances = cleanList
+			end
+		end
+	end
+
+	local reader = Buffers_CreateReader(rawBuffer, validInstances)
+	local totalLength = reader.len
+
+	while reader.cursor < totalLength do
+		local channelHash, packetType, argumentCount = Buffers.ReadEventHeader(reader)
+
+		if argumentCount > MAX_PACKET_ARGUMENTS or reader.cursor > totalLength then
+			break
+		end
+
+		local channel = activeChannels[channelHash]
+		if not channel then
+			for _ = 1, argumentCount do
+				if reader.cursor >= totalLength then
+					break
+				end
+				Buffers_ReadAny(reader)
+			end
+			continue
 		end
 
 		if packetType == PACKET_EVENT then
-			instance._signal:Fire(table_unpack(args, 2, count))
+			channel._signal:Fire(Packet_ReadArguments(reader, argumentCount))
+
 		elseif packetType == PACKET_REQUEST then
-			local reqId = args[2]
-			local handler = instance.OnInvoke
-			if handler then
-				task_spawn(function()
-					local results = table.pack(pcall(handler, table_unpack(args, 3, count)))
-					local ok = results[1]
-
-					local w = Bridge.Writer(true)
-					Buffers.WriteString(w, id)
-
-					local n = (if ok then results.n - 1 else 1) + 2
-					Buffers.WritePacketHeader(w, PACKET_RESPONSE, n)
-
-					Buffers.WriteAny(w, reqId)
-					Buffers.WriteAny(w, ok)
-
-					if ok then
-						for i = 2, results.n do
-							Buffers.WriteAny(w, results[i])
-						end
-					else
-						Buffers.WriteAny(w, results[2])
+			local requestId = Buffers_ReadAny(reader)
+			local handler = channel.OnInvoke
+			if handler ~= nil then
+				task_spawn(handleIncomingRequest, channelHash, requestId, handler, Packet_ReadArguments(reader, argumentCount - 1))
+			else
+				for _ = 1, argumentCount - 1 do
+					if reader.cursor >= totalLength then
+						break
 					end
-				end)
-			end
-		elseif packetType == PACKET_RESPONSE then
-			local reqId = args[2]
-			local ok = args[3] == true or args[3] == 1
-
-			local req = instance._requests[reqId]
-			if req and coroutine.status(req.thread) ~= "dead" then
-				instance._requests[reqId] = nil
-				task_cancel(req.timer)
-				task_spawn(req.thread, ok, table_unpack(args, 4, count))
-			elseif req then
-				instance._requests[reqId] = nil
-				task_cancel(req.timer)
-			end
-		end
-	end
-
-	local function onEvent(b: buffer, i: { Instance })
-		local r = Buffers.CreateReader(b, i)
-
-		local success, err = pcall(function()
-			while r.cursor < r.len do
-				local id = Buffers.ReadString(r)
-				local packetType, argCount = Buffers.ReadPacketHeader(r)
-
-				local args = table.create(argCount + 1)
-				args[1] = packetType
-				for k = 1, argCount do
-					args[k + 1] = Buffers.ReadAny(r)
+					Buffers_ReadAny(reader)
 				end
-
-				dispatch(id, args, argCount + 1)
 			end
-			return true
-		end)
 
-		Buffers.FreeReader(r)
+		elseif packetType == PACKET_RESPONSE then
+			local requestId = Buffers_ReadAny(reader)
+			local statusValue = Buffers_ReadAny(reader)
+			local isSuccess = statusValue == true or statusValue == 1
 
-		if not success then
-			warn("Jolt: Error processing network packet: " .. tostring(err))
+			if typeof(requestId) == "number" then
+				local pending = channel._pendingRequests[requestId]
+				if pending ~= nil then
+					channel._pendingRequests[requestId] = nil
+					channel._pendingCount = math_max(0, channel._pendingCount - 1)
+					task_cancel(pending.timeoutTimer)
+					if coroutine_status(pending.callingThread) ~= "dead" then
+						task_spawn(pending.callingThread, isSuccess, Packet_ReadArguments(reader, argumentCount - 2))
+					else
+						for _ = 1, argumentCount - 2 do
+							if reader.cursor >= totalLength then
+								break
+							end
+							Buffers_ReadAny(reader)
+						end
+					end
+				else
+					for _ = 1, argumentCount - 2 do
+						if reader.cursor >= totalLength then
+							break
+						end
+						Buffers_ReadAny(reader)
+					end
+				end
+			else
+				for _ = 1, argumentCount - 2 do
+					if reader.cursor >= totalLength then
+						break
+					end
+					Buffers_ReadAny(reader)
+				end
+			end
 		end
 	end
 
-	ReliableConn = reliable.OnClientEvent:Connect(onEvent)
-	UnreliableConn = unreliable.OnClientEvent:Connect(onEvent)
+	Buffers_FreeReader(reader)
 end
 
-function Client.new(name: string): any
-	if not ReliableConn or not ReliableConn.Connected then
-		Initialize()
+function Client.new<Args..., Out...>(channelName: string): Client<Args..., Out...>
+	if not reliableConnection or not reliableConnection.Connected then
+		Client.Initialize()
 	end
 
-	if Instances[name] then
-		return Instances[name] :: Client<(...any), (...any)>
+	local channelHash = Hash_HashName(channelName)
+	local existingChannel = activeChannels[channelHash]
+	if existingChannel ~= nil then
+		if existingChannel._id ~= channelName then
+			error(`Jolt: Hash collision between '{existingChannel._id}' and '{channelName}'. Rename one channel.`, 2)
+		end
+		return existingChannel :: any
 	end
 
-	local self: InternalClient = setmetatable({
-		_id = name,
+	local self = setmetatable({
+		_id = channelName,
+		_hash = channelHash,
 		_signal = Signal.new(),
-		_requests = {},
+		_pendingRequests = {},
+		_pendingCount = 0,
 		_requestIdCounter = 0,
-		OnInvoke = nil :: ((...any) -> ...any)?,
+		OnInvoke = nil,
 	}, Client)
 
-	Instances[name] = self
-	return self
+	activeChannels[channelHash] = self :: any
+	return self :: any
 end
 
-function Client:Connect(callback: (...any) -> ())
-	if not (self :: any)._id then
-		error("Jolt: Client method must be called with ':' (e.g., event:Connect(callback))", 2)
-	end
-	return (self :: any)._signal:Connect(callback)
+function Client:Connect(callback: (...any) -> ()): Signal.Connection
+	return self._signal:Connect(callback)
 end
 
-function Client:Once(callback: (...any) -> ())
-	if not (self :: any)._id then
-		error("Jolt: Client method must be called with ':' (e.g., event:Once(callback))", 2)
-	end
-	return (self :: any)._signal:Once(callback)
+function Client:Once(callback: (...any) -> ()): Signal.Connection
+	return self._signal:Once(callback)
 end
 
-function Client:Wait()
-	if not (self :: any)._id then
-		error("Jolt: Client method must be called with ':' (e.g., event:Wait())", 2)
-	end
-	return (self :: any)._signal:Wait()
-end
-
-local function Send(internal: InternalClient, isReliable: boolean, packetType: number, ...: any)
-	local id = internal._id
-	local w = Bridge.Writer(isReliable)
-
-	Buffers.WriteString(w, id)
-
-	local n = select("#", ...)
-	Buffers.WritePacketHeader(w, packetType, n)
-
-	for i = 1, n do
-		Buffers.WriteAny(w, select(i, ...))
-	end
+function Client:Wait(): ...any
+	return self._signal:Wait()
 end
 
 function Client:Fire(...: any)
-	if not (self :: any)._id then
-		error("Jolt: Client method must be called with ':' (e.g., event:Fire(...))", 2)
-	end
-	Send(self :: any, true, PACKET_EVENT, ...)
+	local writer = Bridge_ClientWriter(true)
+	Packet_WriteEvent(writer, self._hash, PACKET_EVENT, ...)
 end
 
 function Client:FireUnreliable(...: any)
-	if not (self :: any)._id then
-		error("Jolt: Client method must be called with ':' (e.g., event:FireUnreliable(...))", 2)
-	end
-	Send(self :: any, false, PACKET_EVENT, ...)
+	local writer = Bridge_ClientWriter(false)
+	Packet_WriteEvent(writer, self._hash, PACKET_EVENT, ...)
 end
 
-function Client:Invoke(...: any)
-	if not (self :: any)._id then
-		error("Jolt: Client method must be called with ':' (e.g., event:Invoke(...))", 2)
+function Client:Invoke(...: any): ...any
+	if self._pendingCount >= MAX_PENDING_REQUESTS then
+		error("Jolt: Exceeded maximum concurrent pending requests.", 2)
 	end
-	local internal: InternalClient = self :: any
-	local reqId = internal._requestIdCounter
-	internal._requestIdCounter += 1
+	self._pendingCount += 1
 
-	Send(internal, true, PACKET_REQUEST, reqId, ...)
+	local requestId = self._requestIdCounter
+	self._requestIdCounter = (requestId + 1) % 0x7FFFFFFF
 
-	local thread = coroutine_running()
-	local timer = task_delay(REQUEST_TIMEOUT, function()
-		if internal._requests[reqId] and internal._requests[reqId].thread == thread then
-			internal._requests[reqId] = nil
-			if coroutine.status(thread) ~= "dead" then
-				task_spawn(thread, false, "Request timed out")
+	local writer = Bridge_ClientWriter(true)
+	Packet_WriteEvent(writer, self._hash, PACKET_REQUEST, requestId, ...)
+
+	local callingThread = coroutine_running()
+	local timeoutTimer = task_delay(REQUEST_TIMEOUT_SECONDS, function()
+		local pending: PendingRequest? = self._pendingRequests[requestId]
+		if pending ~= nil and pending.callingThread == callingThread then
+			self._pendingRequests[requestId] = nil
+			self._pendingCount = math_max(0, self._pendingCount - 1)
+			if coroutine_status(callingThread) ~= "dead" then
+				task_spawn(callingThread, false, "Request timed out")
 			end
 		end
 	end)
 
-	internal._requests[reqId] = { thread = thread, timer = timer }
+	self._pendingRequests[requestId] = {
+		callingThread = callingThread,
+		timeoutTimer = timeoutTimer,
+	}
 
-	local results = table.pack(coroutine_yield())
-	local success = results[1]
+	local isSuccess, argumentA, argumentB, argumentC, argumentD, argumentE, argumentF, argumentG = coroutine_yield()
 
-	if not success then
-		error(tostring(results[2]))
+	if not isSuccess then
+		error(tostring(argumentA), 2)
 	end
 
-	return table_unpack(results, 2, results.n)
+	if argumentG ~= nil then
+		return argumentA, argumentB, argumentC, argumentD, argumentE, argumentF, argumentG
+	elseif argumentF ~= nil then
+		return argumentA, argumentB, argumentC, argumentD, argumentE, argumentF
+	elseif argumentE ~= nil then
+		return argumentA, argumentB, argumentC, argumentD, argumentE
+	elseif argumentD ~= nil then
+		return argumentA, argumentB, argumentC, argumentD
+	elseif argumentC ~= nil then
+		return argumentA, argumentB, argumentC
+	elseif argumentB ~= nil then
+		return argumentA, argumentB
+	end
+	return argumentA
+end
+
+function Client:Destroy()
+	activeChannels[self._hash] = nil
+	self._signal:Destroy()
+
+	for _, pending in self._pendingRequests do
+		task_cancel(pending.timeoutTimer)
+		if coroutine_status(pending.callingThread) ~= "dead" then
+			task_spawn(pending.callingThread, false, "Channel destroyed")
+		end
+	end
+
+	table.clear(self._pendingRequests)
+	self._pendingCount = 0
+end
+
+function Client.Initialize()
+	if reliableConnection and reliableConnection.Connected then
+		return
+	end
+
+	Bridge.Initialize()
+	local remoteGroup = Remotes.Get()
+	reliableRemote = remoteGroup.Reliable
+	unreliableRemote = remoteGroup.Unreliable
+
+	reliableConnection = reliableRemote.OnClientEvent:Connect(onClientNetworkEvent)
+	unreliableConnection = unreliableRemote.OnClientEvent:Connect(onClientNetworkEvent)
 end
 
 return Client
