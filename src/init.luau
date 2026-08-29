@@ -1,6 +1,6 @@
 --!strict
 --[=[
-	Jolt 4.0.0
+	Jolt 4.0.1
 	High-performance binary networking library for Roblox.
 ]=]
 
@@ -43,7 +43,7 @@ export type Client<Args... = (...any), Out... = (...any)> = {
 }
 
 local Jolt = {
-	Version = "4.0.0",
+	Version = "4.0.1",
 }
 
 function Jolt.Server<Args..., Out...>(channelName: string): Server<Args..., Out...>

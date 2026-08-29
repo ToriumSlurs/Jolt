@@ -30,7 +30,7 @@ Add `Jolt` to your `wally.toml` dependencies:
 
 ```toml
 [dependencies]
-Jolt = "toriumslurs/jolt@4.0.0"
+Jolt = "toriumslurs/jolt@4.0.1"
 ```
 
 ### Manual Installation
