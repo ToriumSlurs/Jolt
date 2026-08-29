@@ -25,7 +25,7 @@ Jolt = "toriumslurs/jolt@4.2.0"
 ### Manual
 Place the `Jolt` folder inside `ReplicatedStorage` and require it:
 ```lua
-local Jolt = require(game:GetService("ReplicatedStorage").Jolt)
+local Jolt = require(game.ReplicatedStorage.Jolt)
 ```
 
 ---
