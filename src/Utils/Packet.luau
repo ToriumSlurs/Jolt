@@ -59,7 +59,7 @@ function Packet.ReadArguments(reader: Buffers.Reader, argumentCount: number): ..
 	end
 
 	local clampedCount = if argumentCount > MAX_PACKET_ARGUMENTS then MAX_PACKET_ARGUMENTS else argumentCount
-	local argumentList = table.create(clampedCount)
+	local argumentList = table.create(clampedCount) :: { any }
 
 	for index = 1, clampedCount do
 		if reader.cursor >= reader.len then
@@ -137,7 +137,22 @@ function Packet.WriteEvent(writer: Buffers.Writer, channelHash: number, packetTy
 
 	if argumentCount == 1 then
 		Buffers_WriteAny(writer, (...), 0)
-	elseif argumentCount > 1 then
+	elseif argumentCount == 2 then
+		local argumentA, argumentB = ...
+		Buffers_WriteAny(writer, argumentA, 0)
+		Buffers_WriteAny(writer, argumentB, 0)
+	elseif argumentCount == 3 then
+		local argumentA, argumentB, argumentC = ...
+		Buffers_WriteAny(writer, argumentA, 0)
+		Buffers_WriteAny(writer, argumentB, 0)
+		Buffers_WriteAny(writer, argumentC, 0)
+	elseif argumentCount == 4 then
+		local argumentA, argumentB, argumentC, argumentD = ...
+		Buffers_WriteAny(writer, argumentA, 0)
+		Buffers_WriteAny(writer, argumentB, 0)
+		Buffers_WriteAny(writer, argumentC, 0)
+		Buffers_WriteAny(writer, argumentD, 0)
+	elseif argumentCount > 4 then
 		Packet.WriteArguments(writer, argumentCount, ...)
 	end
 end

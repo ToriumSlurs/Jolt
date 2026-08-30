@@ -1,6 +1,6 @@
-﻿[package]
+[package]
 name = "toriumslurs/jolt"
-version = "4.2.1"
+version = "4.3.0"
 registry = "https://github.com/UpliftGames/wally-index"
 realm = "shared"
 description = "High-performance binary networking library for Roblox."

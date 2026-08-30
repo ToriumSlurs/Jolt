@@ -41,7 +41,7 @@ export type Client<Args... = (...any), Out... = (...any)> = {
 }
 
 local Jolt = {
-	Version = "4.2.0",
+	Version = "4.3.0",
 }
 
 function Jolt.Server<Args..., Out...>(channelName: string): Server<Args..., Out...>
