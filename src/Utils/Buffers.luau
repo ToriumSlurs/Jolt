@@ -41,7 +41,9 @@ local scratchFloatConversionBuffer = buffer_create(8)
 local enumItemsByNameCache: { [string]: { [number]: EnumItem } } = {}
 
 local function getCachedEnumItem(enumName: string, enumValue: number): EnumItem?
-	if enumName == "" then return nil end
+	if enumName == "" then
+		return nil
+	end
 	local itemsByValue = enumItemsByNameCache[enumName]
 	if not itemsByValue then
 		local isSuccess, enumType = pcall(function()
@@ -217,7 +219,9 @@ end
 
 local function readVariableInteger(reader: Reader): number
 	local cursor = reader.cursor
-	if cursor >= reader.len then return 0 end
+	if cursor >= reader.len then
+		return 0
+	end
 	local sourceBuffer = reader.buff
 	local firstByte = buffer_readu8(sourceBuffer, cursor)
 	if firstByte < 128 then
@@ -234,7 +238,11 @@ local function readVariableInteger(reader: Reader): number
 			local thirdByte = buffer_readu8(sourceBuffer, cursor + 2)
 			if thirdByte < 128 then
 				reader.cursor = cursor + 3
-				return bit_bor(bit_band(firstByte, 0x7F), bit_lshift(bit_band(secondByte, 0x7F), 7), bit_lshift(thirdByte, 14))
+				return bit_bor(
+					bit_band(firstByte, 0x7F),
+					bit_lshift(bit_band(secondByte, 0x7F), 7),
+					bit_lshift(thirdByte, 14)
+				)
 			end
 		end
 	end
@@ -275,10 +283,12 @@ local function writeVector3Array(writer: Writer, targetTable: { [any]: any }, ar
 		local v1 = targetTable[index + 1]
 		local v2 = targetTable[index + 2]
 		local v3 = targetTable[index + 3]
-		if (type(v0) ~= "vector" and typeof(v0) ~= "Vector3")
+		if
+			(type(v0) ~= "vector" and typeof(v0) ~= "Vector3")
 			or (type(v1) ~= "vector" and typeof(v1) ~= "Vector3")
 			or (type(v2) ~= "vector" and typeof(v2) ~= "Vector3")
-			or (type(v3) ~= "vector" and typeof(v3) ~= "Vector3") then
+			or (type(v3) ~= "vector" and typeof(v3) ~= "Vector3")
+		then
 			writer.cursor = origCursor
 			return false
 		end
@@ -298,7 +308,10 @@ local function writeVector3Array(writer: Writer, targetTable: { [any]: any }, ar
 	end
 	for index = unrolled + 1, arrayLength do
 		local v = targetTable[index]
-		if type(v) ~= "vector" and typeof(v) ~= "Vector3" then writer.cursor = origCursor return false end
+		if type(v) ~= "vector" and typeof(v) ~= "Vector3" then
+			writer.cursor = origCursor
+			return false
+		end
 		buffer_writef32(targetBuffer, cursor, v.X)
 		buffer_writef32(targetBuffer, cursor + 4, v.Y)
 		buffer_writef32(targetBuffer, cursor + 8, v.Z)
@@ -321,7 +334,10 @@ local function writeVector2Array(writer: Writer, targetTable: { [any]: any }, ar
 
 	for index = 1, arrayLength do
 		local v = targetTable[index]
-		if typeof(v) ~= "Vector2" then writer.cursor = origCursor return false end
+		if typeof(v) ~= "Vector2" then
+			writer.cursor = origCursor
+			return false
+		end
 		buffer_writef32(targetBuffer, cursor, v.X)
 		buffer_writef32(targetBuffer, cursor + 4, v.Y)
 		cursor += 8
@@ -368,7 +384,10 @@ local function writeColor3Array(writer: Writer, targetTable: { [any]: any }, arr
 	end
 	for index = unrolled + 1, arrayLength do
 		local c = targetTable[index]
-		if typeof(c) ~= "Color3" then writer.cursor = origCursor return false end
+		if typeof(c) ~= "Color3" then
+			writer.cursor = origCursor
+			return false
+		end
 		buffer_writeu8(targetBuffer, cursor, c.R * 255 + 0.5)
 		buffer_writeu8(targetBuffer, cursor + 1, c.G * 255 + 0.5)
 		buffer_writeu8(targetBuffer, cursor + 2, c.B * 255 + 0.5)
@@ -428,7 +447,10 @@ local function writeCFrameArray(writer: Writer, targetTable: { [any]: any }, arr
 	end
 	for index = unrolled + 1, arrayLength do
 		local cf = targetTable[index]
-		if typeof(cf) ~= "CFrame" then writer.cursor = origCursor return false end
+		if typeof(cf) ~= "CFrame" then
+			writer.cursor = origCursor
+			return false
+		end
 		local x, y, z, r00, r01, r02, r10, r11, r12, r20, r21, r22 = (cf :: CFrame):GetComponents()
 		buffer_writef32(targetBuffer, cursor, x)
 		buffer_writef32(targetBuffer, cursor + 4, y)
@@ -448,11 +470,44 @@ local function writeCFrameArray(writer: Writer, targetTable: { [any]: any }, arr
 	return true
 end
 
-local function writeNumberArray(writer: Writer, targetTable: { [any]: any }, arrayLength: number, firstElement: number): boolean
+local function writeNumberArray(
+	writer: Writer,
+	targetTable: { [any]: any },
+	arrayLength: number,
+	firstElement: number
+): boolean
 	local origCursor = writer.cursor
-	local isInt = (firstElement % 1 == 0)
+	local allInt = true
+	local minVal = firstElement
+	local maxVal = firstElement
+	local allF32Lossless = true
 
-	if isInt and firstElement >= 0 and firstElement <= 255 then
+	for index = 1, arrayLength do
+		local n = targetTable[index]
+		if type(n) ~= "number" then
+			return false
+		end
+		if allInt then
+			if n % 1 ~= 0 then
+				allInt = false
+			else
+				if n < minVal then
+					minVal = n
+				end
+				if n > maxVal then
+					maxVal = n
+				end
+			end
+		end
+		if not allInt and allF32Lossless then
+			buffer_writef32(scratchFloatConversionBuffer, 0, n)
+			if buffer_readf32(scratchFloatConversionBuffer, 0) ~= n then
+				allF32Lossless = false
+			end
+		end
+	end
+
+	if allInt and minVal >= 0 and maxVal <= 255 then
 		ensureCapacity(writer, 7 + arrayLength)
 		local targetBuffer = writer.buff
 		local cursor = writer.cursor
@@ -464,7 +519,6 @@ local function writeNumberArray(writer: Writer, targetTable: { [any]: any }, arr
 
 		local rem = arrayLength % 16
 		local unrolled = arrayLength - rem
-		local failed = false
 		for index = 1, unrolled, 16 do
 			local n0 = targetTable[index]
 			local n1 = targetTable[index + 1]
@@ -482,96 +536,83 @@ local function writeNumberArray(writer: Writer, targetTable: { [any]: any }, arr
 			local n13 = targetTable[index + 13]
 			local n14 = targetTable[index + 14]
 			local n15 = targetTable[index + 15]
-			if type(n0) ~= "number" or n0 < 0 or n0 > 255 or n0 % 1 ~= 0
-				or type(n1) ~= "number" or n1 < 0 or n1 > 255 or n1 % 1 ~= 0
-				or type(n2) ~= "number" or n2 < 0 or n2 > 255 or n2 % 1 ~= 0
-				or type(n3) ~= "number" or n3 < 0 or n3 > 255 or n3 % 1 ~= 0
-				or type(n4) ~= "number" or n4 < 0 or n4 > 255 or n4 % 1 ~= 0
-				or type(n5) ~= "number" or n5 < 0 or n5 > 255 or n5 % 1 ~= 0
-				or type(n6) ~= "number" or n6 < 0 or n6 > 255 or n6 % 1 ~= 0
-				or type(n7) ~= "number" or n7 < 0 or n7 > 255 or n7 % 1 ~= 0
-				or type(n8) ~= "number" or n8 < 0 or n8 > 255 or n8 % 1 ~= 0
-				or type(n9) ~= "number" or n9 < 0 or n9 > 255 or n9 % 1 ~= 0
-				or type(n10) ~= "number" or n10 < 0 or n10 > 255 or n10 % 1 ~= 0
-				or type(n11) ~= "number" or n11 < 0 or n11 > 255 or n11 % 1 ~= 0
-				or type(n12) ~= "number" or n12 < 0 or n12 > 255 or n12 % 1 ~= 0
-				or type(n13) ~= "number" or n13 < 0 or n13 > 255 or n13 % 1 ~= 0
-				or type(n14) ~= "number" or n14 < 0 or n14 > 255 or n14 % 1 ~= 0
-				or type(n15) ~= "number" or n15 < 0 or n15 > 255 or n15 % 1 ~= 0 then
-				failed = true
-				break
-			end
 			buffer_writeu32(targetBuffer, cursor, n0 + n1 * 256 + n2 * 65536 + n3 * 16777216)
 			buffer_writeu32(targetBuffer, cursor + 4, n4 + n5 * 256 + n6 * 65536 + n7 * 16777216)
 			buffer_writeu32(targetBuffer, cursor + 8, n8 + n9 * 256 + n10 * 65536 + n11 * 16777216)
 			buffer_writeu32(targetBuffer, cursor + 12, n12 + n13 * 256 + n14 * 65536 + n15 * 16777216)
 			cursor += 16
 		end
-		if not failed then
-			for index = unrolled + 1, arrayLength do
-				local v = targetTable[index]
-				if type(v) ~= "number" or v < 0 or v > 255 or v % 1 ~= 0 then
-					failed = true
-					break
-				end
-				buffer_writeu8(targetBuffer, cursor, v)
-				cursor += 1
-			end
+		for index = unrolled + 1, arrayLength do
+			buffer_writeu8(targetBuffer, cursor, targetTable[index])
+			cursor += 1
 		end
-		if not failed then
-			writer.cursor = cursor
-			return true
-		end
-		writer.cursor = origCursor
-	end
+		writer.cursor = cursor
+		return true
+	elseif allInt and minVal >= 0 and maxVal <= 4294967295 then
+		ensureCapacity(writer, 7 + arrayLength * 4)
+		local targetBuffer = writer.buff
+		local cursor = writer.cursor
+		buffer_writeu8(targetBuffer, cursor, TAG_ARR_U32)
+		writer.cursor = cursor + 1
+		writeVariableInteger(writer, arrayLength)
+		cursor = writer.cursor
+		targetBuffer = writer.buff
 
-	-- Floats fast-path
-	ensureCapacity(writer, 7 + arrayLength * 4)
-	local targetBuffer = writer.buff
-	local cursor = writer.cursor
-	buffer_writeu8(targetBuffer, cursor, TAG_ARR_F32)
-	writer.cursor = cursor + 1
-	writeVariableInteger(writer, arrayLength)
-	cursor = writer.cursor
-	targetBuffer = writer.buff
+		for index = 1, arrayLength do
+			buffer_writeu32(targetBuffer, cursor, targetTable[index])
+			cursor += 4
+		end
+		writer.cursor = cursor
+		return true
+	elseif allInt and minVal >= -2147483648 and maxVal <= 2147483647 then
+		ensureCapacity(writer, 7 + arrayLength * 4)
+		local targetBuffer = writer.buff
+		local cursor = writer.cursor
+		buffer_writeu8(targetBuffer, cursor, TAG_ARR_I32)
+		writer.cursor = cursor + 1
+		writeVariableInteger(writer, arrayLength)
+		cursor = writer.cursor
+		targetBuffer = writer.buff
 
-	local rem = arrayLength % 8
-	local unrolled = arrayLength - rem
-	for index = 1, unrolled, 8 do
-		local f0 = targetTable[index]
-		local f1 = targetTable[index + 1]
-		local f2 = targetTable[index + 2]
-		local f3 = targetTable[index + 3]
-		local f4 = targetTable[index + 4]
-		local f5 = targetTable[index + 5]
-		local f6 = targetTable[index + 6]
-		local f7 = targetTable[index + 7]
-		if type(f0) ~= "number" or type(f1) ~= "number" or type(f2) ~= "number" or type(f3) ~= "number"
-			or type(f4) ~= "number" or type(f5) ~= "number" or type(f6) ~= "number" or type(f7) ~= "number" then
-			writer.cursor = origCursor
-			return false
+		for index = 1, arrayLength do
+			buffer_writei32(targetBuffer, cursor, targetTable[index])
+			cursor += 4
 		end
-		buffer_writef32(targetBuffer, cursor, f0)
-		buffer_writef32(targetBuffer, cursor + 4, f1)
-		buffer_writef32(targetBuffer, cursor + 8, f2)
-		buffer_writef32(targetBuffer, cursor + 12, f3)
-		buffer_writef32(targetBuffer, cursor + 16, f4)
-		buffer_writef32(targetBuffer, cursor + 20, f5)
-		buffer_writef32(targetBuffer, cursor + 24, f6)
-		buffer_writef32(targetBuffer, cursor + 28, f7)
-		cursor += 32
-	end
-	for index = unrolled + 1, arrayLength do
-		local v = targetTable[index]
-		if type(v) ~= "number" then
-			writer.cursor = origCursor
-			return false
+		writer.cursor = cursor
+		return true
+	elseif not allInt and allF32Lossless then
+		ensureCapacity(writer, 7 + arrayLength * 4)
+		local targetBuffer = writer.buff
+		local cursor = writer.cursor
+		buffer_writeu8(targetBuffer, cursor, TAG_ARR_F32)
+		writer.cursor = cursor + 1
+		writeVariableInteger(writer, arrayLength)
+		cursor = writer.cursor
+		targetBuffer = writer.buff
+
+		for index = 1, arrayLength do
+			buffer_writef32(targetBuffer, cursor, targetTable[index])
+			cursor += 4
 		end
-		buffer_writef32(targetBuffer, cursor, v)
-		cursor += 4
+		writer.cursor = cursor
+		return true
+	else
+		ensureCapacity(writer, 7 + arrayLength * 8)
+		local targetBuffer = writer.buff
+		local cursor = writer.cursor
+		buffer_writeu8(targetBuffer, cursor, TAG_ARR_F64)
+		writer.cursor = cursor + 1
+		writeVariableInteger(writer, arrayLength)
+		cursor = writer.cursor
+		targetBuffer = writer.buff
+
+		for index = 1, arrayLength do
+			buffer_writef64(targetBuffer, cursor, targetTable[index])
+			cursor += 8
+		end
+		writer.cursor = cursor
+		return true
 	end
-	writer.cursor = cursor
-	return true
 end
 
 local function writeBooleanArray(writer: Writer, targetTable: { [any]: any }, arrayLength: number): boolean
@@ -597,20 +638,30 @@ local function writeBooleanArray(writer: Writer, targetTable: { [any]: any }, ar
 		local b5 = targetTable[elementPointer + 5]
 		local b6 = targetTable[elementPointer + 6]
 		local b7 = targetTable[elementPointer + 7]
-		if type(b0) ~= "boolean" or type(b1) ~= "boolean" or type(b2) ~= "boolean" or type(b3) ~= "boolean"
-			or type(b4) ~= "boolean" or type(b5) ~= "boolean" or type(b6) ~= "boolean" or type(b7) ~= "boolean" then
+		if
+			type(b0) ~= "boolean"
+			or type(b1) ~= "boolean"
+			or type(b2) ~= "boolean"
+			or type(b3) ~= "boolean"
+			or type(b4) ~= "boolean"
+			or type(b5) ~= "boolean"
+			or type(b6) ~= "boolean"
+			or type(b7) ~= "boolean"
+		then
 			writer.cursor = origCursor
 			return false
 		end
-		buffer_writeu8(targetBuffer, cursor,
+		buffer_writeu8(
+			targetBuffer,
+			cursor,
 			(if b0 then 1 else 0)
-			+ (if b1 then 2 else 0)
-			+ (if b2 then 4 else 0)
-			+ (if b3 then 8 else 0)
-			+ (if b4 then 16 else 0)
-			+ (if b5 then 32 else 0)
-			+ (if b6 then 64 else 0)
-			+ (if b7 then 128 else 0)
+				+ (if b1 then 2 else 0)
+				+ (if b2 then 4 else 0)
+				+ (if b3 then 8 else 0)
+				+ (if b4 then 16 else 0)
+				+ (if b5 then 32 else 0)
+				+ (if b6 then 64 else 0)
+				+ (if b7 then 128 else 0)
 		)
 		elementPointer += 8
 		cursor += 1
@@ -669,16 +720,24 @@ local function writeStringArray(writer: Writer, targetTable: { [any]: any }, arr
 			cursor = writer.cursor
 		end
 		buffer_writeu8(targetBuffer, cursor, l0)
-		if l0 > 0 then buffer_writestring(targetBuffer, cursor + 1, s0, l0) end
+		if l0 > 0 then
+			buffer_writestring(targetBuffer, cursor + 1, s0, l0)
+		end
 		cursor += 1 + l0
 		buffer_writeu8(targetBuffer, cursor, l1)
-		if l1 > 0 then buffer_writestring(targetBuffer, cursor + 1, s1, l1) end
+		if l1 > 0 then
+			buffer_writestring(targetBuffer, cursor + 1, s1, l1)
+		end
 		cursor += 1 + l1
 		buffer_writeu8(targetBuffer, cursor, l2)
-		if l2 > 0 then buffer_writestring(targetBuffer, cursor + 1, s2, l2) end
+		if l2 > 0 then
+			buffer_writestring(targetBuffer, cursor + 1, s2, l2)
+		end
 		cursor += 1 + l2
 		buffer_writeu8(targetBuffer, cursor, l3)
-		if l3 > 0 then buffer_writestring(targetBuffer, cursor + 1, s3, l3) end
+		if l3 > 0 then
+			buffer_writestring(targetBuffer, cursor + 1, s3, l3)
+		end
 		cursor += 1 + l3
 	end
 	for index = unrolled + 1, arrayLength do
@@ -708,19 +767,119 @@ local function writeStringArray(writer: Writer, targetTable: { [any]: any }, arr
 	return true
 end
 
-local function inferColumnType(val: any): number
-	local vType = type(val)
+local function inferColumnType(targetTable: { [any]: any }, arrayLength: number, key: string): number
+	local firstVal = targetTable[1][key]
+	local vType = type(firstVal)
 	if vType == "number" then
-		return COL_F32
+		local allInt = true
+		local minVal = firstVal
+		local maxVal = firstVal
+		local allF32Lossless = true
+		for i = 1, arrayLength do
+			local row = targetTable[i]
+			if type(row) ~= "table" then
+				return COL_ANY
+			end
+			local val = row[key]
+			if type(val) ~= "number" then
+				return COL_ANY
+			end
+			if allInt then
+				if val % 1 ~= 0 then
+					allInt = false
+				else
+					if val < minVal then
+						minVal = val
+					end
+					if val > maxVal then
+						maxVal = val
+					end
+				end
+			end
+			if not allInt and allF32Lossless then
+				buffer_writef32(scratchFloatConversionBuffer, 0, val)
+				if buffer_readf32(scratchFloatConversionBuffer, 0) ~= val then
+					allF32Lossless = false
+				end
+			end
+		end
+
+		if allInt then
+			if minVal >= 0 then
+				if maxVal <= 255 then
+					return COL_U8
+				elseif maxVal <= 65535 then
+					return COL_U16
+				elseif maxVal <= 4294967295 then
+					return COL_U32
+				else
+					return COL_F64
+				end
+			else
+				if minVal >= -128 and maxVal <= 127 then
+					return COL_I8
+				elseif minVal >= -32768 and maxVal <= 32767 then
+					return COL_I16
+				elseif minVal >= -2147483648 and maxVal <= 2147483647 then
+					return COL_I32
+				else
+					return COL_F64
+				end
+			end
+		else
+			if allF32Lossless then
+				return COL_F32
+			else
+				return COL_F64
+			end
+		end
 	elseif vType == "boolean" then
+		for i = 1, arrayLength do
+			local row = targetTable[i]
+			if type(row) ~= "table" or type(row[key]) ~= "boolean" then
+				return COL_ANY
+			end
+		end
 		return COL_BOOL
 	elseif vType == "string" then
-		if #val <= 255 then return COL_STR else return COL_ANY end
-	elseif vType == "vector" or typeof(val) == "Vector3" then
+		for i = 1, arrayLength do
+			local row = targetTable[i]
+			if type(row) ~= "table" then
+				return COL_ANY
+			end
+			local val = row[key]
+			if type(val) ~= "string" or #val > 255 then
+				return COL_ANY
+			end
+		end
+		return COL_STR
+	elseif vType == "vector" or typeof(firstVal) == "Vector3" then
+		for i = 1, arrayLength do
+			local row = targetTable[i]
+			if type(row) ~= "table" then
+				return COL_ANY
+			end
+			local val = row[key]
+			if type(val) ~= "vector" and typeof(val) ~= "Vector3" then
+				return COL_ANY
+			end
+		end
 		return COL_VEC3
-	elseif typeof(val) == "CFrame" then
+	elseif typeof(firstVal) == "CFrame" then
+		for i = 1, arrayLength do
+			local row = targetTable[i]
+			if type(row) ~= "table" or typeof(row[key]) ~= "CFrame" then
+				return COL_ANY
+			end
+		end
 		return COL_CFRAME
-	elseif typeof(val) == "Color3" then
+	elseif typeof(firstVal) == "Color3" then
+		for i = 1, arrayLength do
+			local row = targetTable[i]
+			if type(row) ~= "table" or typeof(row[key]) ~= "Color3" then
+				return COL_ANY
+			end
+		end
 		return COL_COLOR3
 	end
 	return COL_ANY
@@ -736,13 +895,13 @@ local function writeDynamicStructArray(
 	local keys = {}
 	local colTypes = {}
 	local keyCount = 0
-	for k, v in pairs(firstElement) do
+	for k in pairs(firstElement) do
 		if type(k) ~= "string" or #k > 255 then
 			return false
 		end
 		keyCount += 1
 		keys[keyCount] = k
-		colTypes[keyCount] = inferColumnType(v)
+		colTypes[keyCount] = inferColumnType(targetTable, arrayLength, k)
 	end
 	if keyCount == 0 or keyCount > 32 then
 		return false
@@ -773,7 +932,9 @@ local function writeDynamicStructArray(
 
 	for index = 1, arrayLength do
 		local row = targetTable[index]
-		if type(row) ~= "table" then return false end
+		if type(row) ~= "table" then
+			return false
+		end
 		if cursor + 128 > writer.len then
 			writer.cursor = cursor
 			ensureCapacity(writer, 128 + (arrayLength - index) * 64)
@@ -783,9 +944,30 @@ local function writeDynamicStructArray(
 		for kIdx = 1, keyCount do
 			local val = row[keys[kIdx]]
 			local cType = colTypes[kIdx]
-			if cType == COL_F32 then
+			if cType == COL_U8 then
+				buffer_writeu8(targetBuffer, cursor, val or 0)
+				cursor += 1
+			elseif cType == COL_I8 then
+				buffer_writei8(targetBuffer, cursor, val or 0)
+				cursor += 1
+			elseif cType == COL_U16 then
+				buffer_writeu16(targetBuffer, cursor, val or 0)
+				cursor += 2
+			elseif cType == COL_I16 then
+				buffer_writei16(targetBuffer, cursor, val or 0)
+				cursor += 2
+			elseif cType == COL_U32 then
+				buffer_writeu32(targetBuffer, cursor, val or 0)
+				cursor += 4
+			elseif cType == COL_I32 then
+				buffer_writei32(targetBuffer, cursor, val or 0)
+				cursor += 4
+			elseif cType == COL_F32 then
 				buffer_writef32(targetBuffer, cursor, val or 0)
 				cursor += 4
+			elseif cType == COL_F64 then
+				buffer_writef64(targetBuffer, cursor, val or 0)
+				cursor += 8
 			elseif cType == COL_BOOL then
 				buffer_writeu8(targetBuffer, cursor, if val then 1 else 0)
 				cursor += 1
@@ -793,7 +975,9 @@ local function writeDynamicStructArray(
 				local s = tostring(val or "")
 				local sLen = #s
 				buffer_writeu8(targetBuffer, cursor, sLen)
-				if sLen > 0 then buffer_writestring(targetBuffer, cursor + 1, s, sLen) end
+				if sLen > 0 then
+					buffer_writestring(targetBuffer, cursor + 1, s, sLen)
+				end
 				cursor += 1 + sLen
 			elseif cType == COL_VEC3 then
 				local v = val or Vector3.zero
@@ -871,14 +1055,37 @@ local function writeDictionarySinglePass(writer: Writer, targetTable: { [any]: a
 				buffer_writeu8(targetBuffer, cursor, TAG_U16)
 				buffer_writeu16(targetBuffer, cursor + 1, mapValue)
 				cursor += 3
-			elseif mapValue % 1 == 0 then
+			elseif mapValue >= 0 and mapValue <= 4294967295 and mapValue % 1 == 0 then
+				buffer_writeu8(targetBuffer, cursor, TAG_U32)
+				buffer_writeu32(targetBuffer, cursor + 1, mapValue)
+				cursor += 5
+			elseif mapValue >= -128 and mapValue <= 127 and mapValue % 1 == 0 then
+				buffer_writeu8(targetBuffer, cursor, TAG_I8)
+				buffer_writei8(targetBuffer, cursor + 1, mapValue)
+				cursor += 2
+			elseif mapValue >= -32768 and mapValue <= 32767 and mapValue % 1 == 0 then
+				buffer_writeu8(targetBuffer, cursor, TAG_I16)
+				buffer_writei16(targetBuffer, cursor + 1, mapValue)
+				cursor += 3
+			elseif mapValue >= -2147483648 and mapValue <= 2147483647 and mapValue % 1 == 0 then
 				buffer_writeu8(targetBuffer, cursor, TAG_I32)
 				buffer_writei32(targetBuffer, cursor + 1, mapValue)
 				cursor += 5
+			elseif mapValue % 1 == 0 then
+				buffer_writeu8(targetBuffer, cursor, TAG_F64)
+				buffer_writef64(targetBuffer, cursor + 1, mapValue)
+				cursor += 9
 			else
-				buffer_writeu8(targetBuffer, cursor, TAG_F32)
-				buffer_writef32(targetBuffer, cursor + 1, mapValue)
-				cursor += 5
+				buffer_writef32(scratchFloatConversionBuffer, 0, mapValue)
+				if buffer_readf32(scratchFloatConversionBuffer, 0) == mapValue then
+					buffer_writeu8(targetBuffer, cursor, TAG_F32)
+					buffer_writef32(targetBuffer, cursor + 1, mapValue)
+					cursor += 5
+				else
+					buffer_writeu8(targetBuffer, cursor, TAG_F64)
+					buffer_writef64(targetBuffer, cursor + 1, mapValue)
+					cursor += 9
+				end
 			end
 		elseif vType == "boolean" then
 			buffer_writeu8(targetBuffer, cursor, if mapValue then TAG_BOOL_T else TAG_BOOL_F)
@@ -888,7 +1095,9 @@ local function writeDictionarySinglePass(writer: Writer, targetTable: { [any]: a
 			if sLen <= 255 then
 				buffer_writeu8(targetBuffer, cursor, TAG_STR_U8)
 				buffer_writeu8(targetBuffer, cursor + 1, sLen)
-				if sLen > 0 then buffer_writestring(targetBuffer, cursor + 2, mapValue, sLen) end
+				if sLen > 0 then
+					buffer_writestring(targetBuffer, cursor + 2, mapValue, sLen)
+				end
 				cursor += 2 + sLen
 			else
 				writer.cursor = cursor
@@ -922,26 +1131,44 @@ local function writeTableValue(writer: Writer, targetTable: { [any]: any }, curr
 		local firstElement = targetTable[1]
 		local elementType = type(firstElement)
 		if elementType == "vector" then
-			if writeVector3Array(writer, targetTable, arrayLength) then return end
+			if writeVector3Array(writer, targetTable, arrayLength) then
+				return
+			end
 		elseif elementType == "userdata" then
 			local userdataType = typeof(firstElement)
 			if userdataType == "Vector3" then
-				if writeVector3Array(writer, targetTable, arrayLength) then return end
+				if writeVector3Array(writer, targetTable, arrayLength) then
+					return
+				end
 			elseif userdataType == "Vector2" then
-				if writeVector2Array(writer, targetTable, arrayLength) then return end
+				if writeVector2Array(writer, targetTable, arrayLength) then
+					return
+				end
 			elseif userdataType == "Color3" then
-				if writeColor3Array(writer, targetTable, arrayLength) then return end
+				if writeColor3Array(writer, targetTable, arrayLength) then
+					return
+				end
 			elseif userdataType == "CFrame" then
-				if writeCFrameArray(writer, targetTable, arrayLength) then return end
+				if writeCFrameArray(writer, targetTable, arrayLength) then
+					return
+				end
 			end
 		elseif elementType == "number" then
-			if writeNumberArray(writer, targetTable, arrayLength, firstElement) then return end
+			if writeNumberArray(writer, targetTable, arrayLength, firstElement) then
+				return
+			end
 		elseif elementType == "boolean" then
-			if writeBooleanArray(writer, targetTable, arrayLength) then return end
+			if writeBooleanArray(writer, targetTable, arrayLength) then
+				return
+			end
 		elseif elementType == "string" then
-			if writeStringArray(writer, targetTable, arrayLength) then return end
+			if writeStringArray(writer, targetTable, arrayLength) then
+				return
+			end
 		elseif elementType == "table" then
-			if writeDynamicStructArray(writer, targetTable, arrayLength, firstElement, currentDepth) then return end
+			if writeDynamicStructArray(writer, targetTable, arrayLength, firstElement, currentDepth) then
+				return
+			end
 		end
 
 		ensureCapacity(writer, 6)
@@ -954,11 +1181,15 @@ local function writeTableValue(writer: Writer, targetTable: { [any]: any }, curr
 			writeAnyValue(writer, targetTable[index], currentDepth + 1)
 		end
 	else
-		if writeDictionarySinglePass(writer, targetTable, currentDepth) then return end
+		if writeDictionarySinglePass(writer, targetTable, currentDepth) then
+			return
+		end
 
 		local validMapEntries = 0
 		for mapKey in pairs(targetTable) do
-			if mapKey ~= nil and mapKey == mapKey then validMapEntries += 1 end
+			if mapKey ~= nil and mapKey == mapKey then
+				validMapEntries += 1
+			end
 		end
 		ensureCapacity(writer, 6)
 		local targetBuffer = writer.buff
@@ -976,7 +1207,9 @@ local function writeTableValue(writer: Writer, targetTable: { [any]: any }, curr
 end
 
 writeAnyValue = function(writer: Writer, targetValue: any, currentDepth: number)
-	if currentDepth > MAX_SERIALIZATION_DEPTH then return end
+	if currentDepth > MAX_SERIALIZATION_DEPTH then
+		return
+	end
 	local valueType = type(targetValue)
 	if valueType == "nil" then
 		ensureCapacity(writer, 1)
@@ -1042,11 +1275,20 @@ writeAnyValue = function(writer: Writer, targetValue: any, currentDepth: number)
 				end
 			end
 		else
-			ensureCapacity(writer, 5)
-			local c = writer.cursor
-			buffer_writeu8(writer.buff, c, TAG_F32)
-			buffer_writef32(writer.buff, c + 1, targetValue)
-			writer.cursor = c + 5
+			buffer_writef32(scratchFloatConversionBuffer, 0, targetValue)
+			if buffer_readf32(scratchFloatConversionBuffer, 0) == targetValue then
+				ensureCapacity(writer, 5)
+				local c = writer.cursor
+				buffer_writeu8(writer.buff, c, TAG_F32)
+				buffer_writef32(writer.buff, c + 1, targetValue)
+				writer.cursor = c + 5
+			else
+				ensureCapacity(writer, 9)
+				local c = writer.cursor
+				buffer_writeu8(writer.buff, c, TAG_F64)
+				buffer_writef64(writer.buff, c + 1, targetValue)
+				writer.cursor = c + 9
+			end
 		end
 	elseif valueType == "string" then
 		local stringLength = #targetValue
@@ -1056,7 +1298,9 @@ writeAnyValue = function(writer: Writer, targetValue: any, currentDepth: number)
 			local b = writer.buff
 			buffer_writeu8(b, c, TAG_STR_U8)
 			buffer_writeu8(b, c + 1, stringLength)
-			if stringLength > 0 then buffer_writestring(b, c + 2, targetValue, stringLength) end
+			if stringLength > 0 then
+				buffer_writestring(b, c + 2, targetValue, stringLength)
+			end
 			writer.cursor = c + 2 + stringLength
 		elseif stringLength <= 65535 then
 			ensureCapacity(writer, 3 + stringLength)
@@ -1231,14 +1475,20 @@ writeAnyValue = function(writer: Writer, targetValue: any, currentDepth: number)
 end
 
 local function readTableValue(reader: Reader, tagByte: number, currentDepth: number): any
-	if currentDepth > MAX_SERIALIZATION_DEPTH then return {} end
+	if currentDepth > MAX_SERIALIZATION_DEPTH then
+		return {}
+	end
 	local sourceBuffer = reader.buff
 
 	if tagByte == TAG_ARR_U8 then
 		local count = readVariableInteger(reader)
 		local availableBytes = reader.len - reader.cursor
-		if count > availableBytes then count = availableBytes end
-		if count <= 0 then return {} end
+		if count > availableBytes then
+			count = availableBytes
+		end
+		if count <= 0 then
+			return {}
+		end
 		local arrayResult = table_create(count) :: { number }
 		local cursor = reader.cursor
 		local rem = count % 16
@@ -1275,8 +1525,12 @@ local function readTableValue(reader: Reader, tagByte: number, currentDepth: num
 	elseif tagByte == TAG_ARR_F32 then
 		local count = readVariableInteger(reader)
 		local availableBytes = (reader.len - reader.cursor) // 4
-		if count > availableBytes then count = availableBytes end
-		if count <= 0 then return {} end
+		if count > availableBytes then
+			count = availableBytes
+		end
+		if count <= 0 then
+			return {}
+		end
 		local arrayResult = table_create(count) :: { number }
 		local cursor = reader.cursor
 		local rem = count % 8
@@ -1298,24 +1552,99 @@ local function readTableValue(reader: Reader, tagByte: number, currentDepth: num
 		end
 		reader.cursor = cursor
 		return arrayResult
+	elseif tagByte == TAG_ARR_U32 then
+		local count = readVariableInteger(reader)
+		local availableBytes = (reader.len - reader.cursor) // 4
+		if count > availableBytes then
+			count = availableBytes
+		end
+		if count <= 0 then
+			return {}
+		end
+		local arrayResult = table_create(count) :: { number }
+		local cursor = reader.cursor
+		for index = 1, count do
+			arrayResult[index] = buffer_readu32(sourceBuffer, cursor)
+			cursor += 4
+		end
+		reader.cursor = cursor
+		return arrayResult
+	elseif tagByte == TAG_ARR_I32 then
+		local count = readVariableInteger(reader)
+		local availableBytes = (reader.len - reader.cursor) // 4
+		if count > availableBytes then
+			count = availableBytes
+		end
+		if count <= 0 then
+			return {}
+		end
+		local arrayResult = table_create(count) :: { number }
+		local cursor = reader.cursor
+		for index = 1, count do
+			arrayResult[index] = buffer_readi32(sourceBuffer, cursor)
+			cursor += 4
+		end
+		reader.cursor = cursor
+		return arrayResult
+	elseif tagByte == TAG_ARR_F64 then
+		local count = readVariableInteger(reader)
+		local availableBytes = (reader.len - reader.cursor) // 8
+		if count > availableBytes then
+			count = availableBytes
+		end
+		if count <= 0 then
+			return {}
+		end
+		local arrayResult = table_create(count) :: { number }
+		local cursor = reader.cursor
+		for index = 1, count do
+			arrayResult[index] = buffer_readf64(sourceBuffer, cursor)
+			cursor += 8
+		end
+		reader.cursor = cursor
+		return arrayResult
 	elseif tagByte == TAG_ARR_VEC3 then
 		local count = readVariableInteger(reader)
 		local availableBytes = (reader.len - reader.cursor) // 12
-		if count > availableBytes then count = availableBytes end
-		if count <= 0 then return {} end
+		if count > availableBytes then
+			count = availableBytes
+		end
+		if count <= 0 then
+			return {}
+		end
 		local arrayResult = table_create(count) :: { Vector3 }
 		local cursor = reader.cursor
 		local rem = count % 4
 		local unrolled = count - rem
 		for index = 1, unrolled, 4 do
-			arrayResult[index] = Vector3.new(buffer_readf32(sourceBuffer, cursor), buffer_readf32(sourceBuffer, cursor + 4), buffer_readf32(sourceBuffer, cursor + 8))
-			arrayResult[index + 1] = Vector3.new(buffer_readf32(sourceBuffer, cursor + 12), buffer_readf32(sourceBuffer, cursor + 16), buffer_readf32(sourceBuffer, cursor + 20))
-			arrayResult[index + 2] = Vector3.new(buffer_readf32(sourceBuffer, cursor + 24), buffer_readf32(sourceBuffer, cursor + 28), buffer_readf32(sourceBuffer, cursor + 32))
-			arrayResult[index + 3] = Vector3.new(buffer_readf32(sourceBuffer, cursor + 36), buffer_readf32(sourceBuffer, cursor + 40), buffer_readf32(sourceBuffer, cursor + 44))
+			arrayResult[index] = Vector3.new(
+				buffer_readf32(sourceBuffer, cursor),
+				buffer_readf32(sourceBuffer, cursor + 4),
+				buffer_readf32(sourceBuffer, cursor + 8)
+			)
+			arrayResult[index + 1] = Vector3.new(
+				buffer_readf32(sourceBuffer, cursor + 12),
+				buffer_readf32(sourceBuffer, cursor + 16),
+				buffer_readf32(sourceBuffer, cursor + 20)
+			)
+			arrayResult[index + 2] = Vector3.new(
+				buffer_readf32(sourceBuffer, cursor + 24),
+				buffer_readf32(sourceBuffer, cursor + 28),
+				buffer_readf32(sourceBuffer, cursor + 32)
+			)
+			arrayResult[index + 3] = Vector3.new(
+				buffer_readf32(sourceBuffer, cursor + 36),
+				buffer_readf32(sourceBuffer, cursor + 40),
+				buffer_readf32(sourceBuffer, cursor + 44)
+			)
 			cursor += 48
 		end
 		for index = unrolled + 1, count do
-			arrayResult[index] = Vector3.new(buffer_readf32(sourceBuffer, cursor), buffer_readf32(sourceBuffer, cursor + 4), buffer_readf32(sourceBuffer, cursor + 8))
+			arrayResult[index] = Vector3.new(
+				buffer_readf32(sourceBuffer, cursor),
+				buffer_readf32(sourceBuffer, cursor + 4),
+				buffer_readf32(sourceBuffer, cursor + 8)
+			)
 			cursor += 12
 		end
 		reader.cursor = cursor
@@ -1323,16 +1652,28 @@ local function readTableValue(reader: Reader, tagByte: number, currentDepth: num
 	elseif tagByte == TAG_ARR_CFRAME then
 		local count = readVariableInteger(reader)
 		local availableBytes = (reader.len - reader.cursor) // 48
-		if count > availableBytes then count = availableBytes end
-		if count <= 0 then return {} end
+		if count > availableBytes then
+			count = availableBytes
+		end
+		if count <= 0 then
+			return {}
+		end
 		local arrayResult = table_create(count) :: { CFrame }
 		local cursor = reader.cursor
 		for index = 1, count do
 			arrayResult[index] = CFrame.new(
-				buffer_readf32(sourceBuffer, cursor), buffer_readf32(sourceBuffer, cursor + 4), buffer_readf32(sourceBuffer, cursor + 8),
-				buffer_readf32(sourceBuffer, cursor + 12), buffer_readf32(sourceBuffer, cursor + 16), buffer_readf32(sourceBuffer, cursor + 20),
-				buffer_readf32(sourceBuffer, cursor + 24), buffer_readf32(sourceBuffer, cursor + 28), buffer_readf32(sourceBuffer, cursor + 32),
-				buffer_readf32(sourceBuffer, cursor + 36), buffer_readf32(sourceBuffer, cursor + 40), buffer_readf32(sourceBuffer, cursor + 44)
+				buffer_readf32(sourceBuffer, cursor),
+				buffer_readf32(sourceBuffer, cursor + 4),
+				buffer_readf32(sourceBuffer, cursor + 8),
+				buffer_readf32(sourceBuffer, cursor + 12),
+				buffer_readf32(sourceBuffer, cursor + 16),
+				buffer_readf32(sourceBuffer, cursor + 20),
+				buffer_readf32(sourceBuffer, cursor + 24),
+				buffer_readf32(sourceBuffer, cursor + 28),
+				buffer_readf32(sourceBuffer, cursor + 32),
+				buffer_readf32(sourceBuffer, cursor + 36),
+				buffer_readf32(sourceBuffer, cursor + 40),
+				buffer_readf32(sourceBuffer, cursor + 44)
 			)
 			cursor += 48
 		end
@@ -1341,12 +1682,20 @@ local function readTableValue(reader: Reader, tagByte: number, currentDepth: num
 	elseif tagByte == TAG_ARR_COLOR3 then
 		local count = readVariableInteger(reader)
 		local availableBytes = (reader.len - reader.cursor) // 3
-		if count > availableBytes then count = availableBytes end
-		if count <= 0 then return {} end
+		if count > availableBytes then
+			count = availableBytes
+		end
+		if count <= 0 then
+			return {}
+		end
 		local arrayResult = table_create(count) :: { Color3 }
 		local cursor = reader.cursor
 		for index = 1, count do
-			arrayResult[index] = Color3.fromRGB(buffer_readu8(sourceBuffer, cursor), buffer_readu8(sourceBuffer, cursor + 1), buffer_readu8(sourceBuffer, cursor + 2))
+			arrayResult[index] = Color3.fromRGB(
+				buffer_readu8(sourceBuffer, cursor),
+				buffer_readu8(sourceBuffer, cursor + 1),
+				buffer_readu8(sourceBuffer, cursor + 2)
+			)
 			cursor += 3
 		end
 		reader.cursor = cursor
@@ -1355,8 +1704,12 @@ local function readTableValue(reader: Reader, tagByte: number, currentDepth: num
 		local count = readVariableInteger(reader)
 		local availableBytes = reader.len - reader.cursor
 		local maximumBoolsPossible = availableBytes * 8
-		if count > maximumBoolsPossible then count = maximumBoolsPossible end
-		if count <= 0 then return {} end
+		if count > maximumBoolsPossible then
+			count = maximumBoolsPossible
+		end
+		if count <= 0 then
+			return {}
+		end
 		local arrayResult = table_create(count) :: { boolean }
 		local eightBitBlocks = count // 8
 		local elementPointer = 1
@@ -1387,15 +1740,23 @@ local function readTableValue(reader: Reader, tagByte: number, currentDepth: num
 	elseif tagByte == TAG_ARR_STR then
 		local count = readVariableInteger(reader)
 		local availableBytes = reader.len - reader.cursor
-		if count > availableBytes then count = availableBytes end
-		if count <= 0 then return {} end
+		if count > availableBytes then
+			count = availableBytes
+		end
+		if count <= 0 then
+			return {}
+		end
 		local arrayResult = table_create(count) :: { string }
 		local cursor = reader.cursor
 		for index = 1, count do
-			if cursor >= reader.len then break end
+			if cursor >= reader.len then
+				break
+			end
 			local strLen = buffer_readu8(sourceBuffer, cursor)
 			cursor += 1
-			if cursor + strLen > reader.len then strLen = math_max(0, reader.len - cursor) end
+			if cursor + strLen > reader.len then
+				strLen = math_max(0, reader.len - cursor)
+			end
 			arrayResult[index] = if strLen > 0 then buffer_readstring(sourceBuffer, cursor, strLen) else ""
 			cursor += strLen
 		end
@@ -1404,7 +1765,9 @@ local function readTableValue(reader: Reader, tagByte: number, currentDepth: num
 	elseif tagByte == TAG_ARR_STRUCT_TYPED then
 		local elementCount = readVariableInteger(reader)
 		local cursor = reader.cursor
-		if cursor >= reader.len then return {} end
+		if cursor >= reader.len then
+			return {}
+		end
 		local keyCount = buffer_readu8(sourceBuffer, cursor)
 		cursor += 1
 		local keys = table_create(keyCount) :: { string }
@@ -1418,13 +1781,36 @@ local function readTableValue(reader: Reader, tagByte: number, currentDepth: num
 
 		local arrayResult = table_create(elementCount) :: { { [string]: any } }
 		for i = 1, elementCount do
-			if cursor >= reader.len then break end
+			if cursor >= reader.len then
+				break
+			end
 			local row: { [string]: any } = {}
 			for kIdx = 1, keyCount do
 				local cType = colTypes[kIdx]
-				if cType == COL_F32 then
+				if cType == COL_U8 then
+					row[keys[kIdx]] = buffer_readu8(sourceBuffer, cursor)
+					cursor += 1
+				elseif cType == COL_I8 then
+					row[keys[kIdx]] = buffer_readi8(sourceBuffer, cursor)
+					cursor += 1
+				elseif cType == COL_U16 then
+					row[keys[kIdx]] = buffer_readu16(sourceBuffer, cursor)
+					cursor += 2
+				elseif cType == COL_I16 then
+					row[keys[kIdx]] = buffer_readi16(sourceBuffer, cursor)
+					cursor += 2
+				elseif cType == COL_U32 then
+					row[keys[kIdx]] = buffer_readu32(sourceBuffer, cursor)
+					cursor += 4
+				elseif cType == COL_I32 then
+					row[keys[kIdx]] = buffer_readi32(sourceBuffer, cursor)
+					cursor += 4
+				elseif cType == COL_F32 then
 					row[keys[kIdx]] = buffer_readf32(sourceBuffer, cursor)
 					cursor += 4
+				elseif cType == COL_F64 then
+					row[keys[kIdx]] = buffer_readf64(sourceBuffer, cursor)
+					cursor += 8
 				elseif cType == COL_BOOL then
 					row[keys[kIdx]] = buffer_readu8(sourceBuffer, cursor) == 1
 					cursor += 1
@@ -1433,17 +1819,33 @@ local function readTableValue(reader: Reader, tagByte: number, currentDepth: num
 					row[keys[kIdx]] = if sLen > 0 then buffer_readstring(sourceBuffer, cursor + 1, sLen) else ""
 					cursor += 1 + sLen
 				elseif cType == COL_VEC3 then
-					row[keys[kIdx]] = Vector3.new(buffer_readf32(sourceBuffer, cursor), buffer_readf32(sourceBuffer, cursor + 4), buffer_readf32(sourceBuffer, cursor + 8))
+					row[keys[kIdx]] = Vector3.new(
+						buffer_readf32(sourceBuffer, cursor),
+						buffer_readf32(sourceBuffer, cursor + 4),
+						buffer_readf32(sourceBuffer, cursor + 8)
+					)
 					cursor += 12
 				elseif cType == COL_COLOR3 then
-					row[keys[kIdx]] = Color3.fromRGB(buffer_readu8(sourceBuffer, cursor), buffer_readu8(sourceBuffer, cursor + 1), buffer_readu8(sourceBuffer, cursor + 2))
+					row[keys[kIdx]] = Color3.fromRGB(
+						buffer_readu8(sourceBuffer, cursor),
+						buffer_readu8(sourceBuffer, cursor + 1),
+						buffer_readu8(sourceBuffer, cursor + 2)
+					)
 					cursor += 3
 				elseif cType == COL_CFRAME then
 					row[keys[kIdx]] = CFrame.new(
-						buffer_readf32(sourceBuffer, cursor), buffer_readf32(sourceBuffer, cursor + 4), buffer_readf32(sourceBuffer, cursor + 8),
-						buffer_readf32(sourceBuffer, cursor + 12), buffer_readf32(sourceBuffer, cursor + 16), buffer_readf32(sourceBuffer, cursor + 20),
-						buffer_readf32(sourceBuffer, cursor + 24), buffer_readf32(sourceBuffer, cursor + 28), buffer_readf32(sourceBuffer, cursor + 32),
-						buffer_readf32(sourceBuffer, cursor + 36), buffer_readf32(sourceBuffer, cursor + 40), buffer_readf32(sourceBuffer, cursor + 44)
+						buffer_readf32(sourceBuffer, cursor),
+						buffer_readf32(sourceBuffer, cursor + 4),
+						buffer_readf32(sourceBuffer, cursor + 8),
+						buffer_readf32(sourceBuffer, cursor + 12),
+						buffer_readf32(sourceBuffer, cursor + 16),
+						buffer_readf32(sourceBuffer, cursor + 20),
+						buffer_readf32(sourceBuffer, cursor + 24),
+						buffer_readf32(sourceBuffer, cursor + 28),
+						buffer_readf32(sourceBuffer, cursor + 32),
+						buffer_readf32(sourceBuffer, cursor + 36),
+						buffer_readf32(sourceBuffer, cursor + 40),
+						buffer_readf32(sourceBuffer, cursor + 44)
 					)
 					cursor += 48
 				else
@@ -1458,12 +1860,16 @@ local function readTableValue(reader: Reader, tagByte: number, currentDepth: num
 		return arrayResult
 	elseif tagByte == TAG_MAP_STR_FAST then
 		local cursor = reader.cursor
-		if cursor + 4 > reader.len then return {} end
+		if cursor + 4 > reader.len then
+			return {}
+		end
 		local entryCount = buffer_readu32(sourceBuffer, cursor)
 		cursor += 4
 		local mapResult: { [string]: any } = {}
 		for _ = 1, entryCount do
-			if cursor >= reader.len then break end
+			if cursor >= reader.len then
+				break
+			end
 			local kLen = buffer_readu8(sourceBuffer, cursor)
 			local k = buffer_readstring(sourceBuffer, cursor + 1, kLen)
 			cursor += 1 + kLen
@@ -1472,8 +1878,14 @@ local function readTableValue(reader: Reader, tagByte: number, currentDepth: num
 			if vTag == TAG_U8 then
 				mapResult[k] = buffer_readu8(sourceBuffer, cursor)
 				cursor += 1
+			elseif vTag == TAG_I8 then
+				mapResult[k] = buffer_readi8(sourceBuffer, cursor)
+				cursor += 1
 			elseif vTag == TAG_U16 then
 				mapResult[k] = buffer_readu16(sourceBuffer, cursor)
+				cursor += 2
+			elseif vTag == TAG_I16 then
+				mapResult[k] = buffer_readi16(sourceBuffer, cursor)
 				cursor += 2
 			elseif vTag == TAG_U32 then
 				mapResult[k] = buffer_readu32(sourceBuffer, cursor)
@@ -1496,7 +1908,11 @@ local function readTableValue(reader: Reader, tagByte: number, currentDepth: num
 				mapResult[k] = if sLen > 0 then buffer_readstring(sourceBuffer, cursor + 1, sLen) else ""
 				cursor += 1 + sLen
 			elseif vTag == TAG_VEC3 then
-				mapResult[k] = Vector3.new(buffer_readf32(sourceBuffer, cursor), buffer_readf32(sourceBuffer, cursor + 4), buffer_readf32(sourceBuffer, cursor + 8))
+				mapResult[k] = Vector3.new(
+					buffer_readf32(sourceBuffer, cursor),
+					buffer_readf32(sourceBuffer, cursor + 4),
+					buffer_readf32(sourceBuffer, cursor + 8)
+				)
 				cursor += 12
 			else
 				reader.cursor = cursor - 1
@@ -1509,21 +1925,31 @@ local function readTableValue(reader: Reader, tagByte: number, currentDepth: num
 	elseif tagByte == TAG_ARRAY then
 		local elementCount = readVariableInteger(reader)
 		local availableBytes = reader.len - reader.cursor
-		if elementCount > availableBytes then elementCount = availableBytes end
-		if elementCount <= 0 then return {} end
+		if elementCount > availableBytes then
+			elementCount = availableBytes
+		end
+		if elementCount <= 0 then
+			return {}
+		end
 		local arrayResult = table_create(elementCount) :: { any }
 		for index = 1, elementCount do
-			if reader.cursor >= reader.len then break end
+			if reader.cursor >= reader.len then
+				break
+			end
 			arrayResult[index] = readAnyValue(reader, currentDepth + 1)
 		end
 		return arrayResult
 	elseif tagByte == TAG_MAP then
 		local pairCount = readVariableInteger(reader)
 		local availableBytes = (reader.len - reader.cursor) // 2
-		if pairCount > availableBytes then pairCount = availableBytes end
+		if pairCount > availableBytes then
+			pairCount = availableBytes
+		end
 		local mapResult: { [any]: any } = {}
 		for _ = 1, pairCount do
-			if reader.cursor >= reader.len then break end
+			if reader.cursor >= reader.len then
+				break
+			end
 			local mapKey = readAnyValue(reader, currentDepth + 1)
 			if mapKey ~= nil and mapKey == mapKey then
 				local mapValue = readAnyValue(reader, currentDepth + 1)
@@ -1536,16 +1962,23 @@ local function readTableValue(reader: Reader, tagByte: number, currentDepth: num
 end
 
 readAnyValue = function(reader: Reader, currentDepth: number): any
-	if currentDepth > MAX_SERIALIZATION_DEPTH then return nil end
+	if currentDepth > MAX_SERIALIZATION_DEPTH then
+		return nil
+	end
 	local cursor = reader.cursor
-	if cursor >= reader.len then return nil end
+	if cursor >= reader.len then
+		return nil
+	end
 	local sourceBuffer = reader.buff
 	local tagByte = buffer_readu8(sourceBuffer, cursor)
 	reader.cursor = cursor + 1
 
-	if tagByte == TAG_NIL then return nil
-	elseif tagByte == TAG_BOOL_F then return false
-	elseif tagByte == TAG_BOOL_T then return true
+	if tagByte == TAG_NIL then
+		return nil
+	elseif tagByte == TAG_BOOL_F then
+		return false
+	elseif tagByte == TAG_BOOL_T then
+		return true
 	elseif tagByte == TAG_U8 then
 		local val = buffer_readu8(sourceBuffer, cursor + 1)
 		reader.cursor = cursor + 2
@@ -1612,10 +2045,18 @@ readAnyValue = function(reader: Reader, currentDepth: number): any
 		return Vector2.new(x, y)
 	elseif tagByte == TAG_CFRAME then
 		local cf = CFrame.new(
-			buffer_readf32(sourceBuffer, cursor + 1), buffer_readf32(sourceBuffer, cursor + 5), buffer_readf32(sourceBuffer, cursor + 9),
-			buffer_readf32(sourceBuffer, cursor + 13), buffer_readf32(sourceBuffer, cursor + 17), buffer_readf32(sourceBuffer, cursor + 21),
-			buffer_readf32(sourceBuffer, cursor + 25), buffer_readf32(sourceBuffer, cursor + 29), buffer_readf32(sourceBuffer, cursor + 33),
-			buffer_readf32(sourceBuffer, cursor + 37), buffer_readf32(sourceBuffer, cursor + 41), buffer_readf32(sourceBuffer, cursor + 45)
+			buffer_readf32(sourceBuffer, cursor + 1),
+			buffer_readf32(sourceBuffer, cursor + 5),
+			buffer_readf32(sourceBuffer, cursor + 9),
+			buffer_readf32(sourceBuffer, cursor + 13),
+			buffer_readf32(sourceBuffer, cursor + 17),
+			buffer_readf32(sourceBuffer, cursor + 21),
+			buffer_readf32(sourceBuffer, cursor + 25),
+			buffer_readf32(sourceBuffer, cursor + 29),
+			buffer_readf32(sourceBuffer, cursor + 33),
+			buffer_readf32(sourceBuffer, cursor + 37),
+			buffer_readf32(sourceBuffer, cursor + 41),
+			buffer_readf32(sourceBuffer, cursor + 45)
 		)
 		reader.cursor = cursor + 49
 		return cf
@@ -1699,7 +2140,9 @@ function Buffers.CreateWriter(capacity: number?): Writer
 end
 
 function Buffers.FreeWriter(writer: Writer)
-	if writer.len > MAX_REUSABLE_CAPACITY then return end
+	if writer.len > MAX_REUSABLE_CAPACITY then
+		return
+	end
 	if #writerMemoryPool < 64 then
 		writer.cursor = 0
 		table_clear(writer.insts)
@@ -1773,7 +2216,9 @@ end
 
 function Buffers.ReadPacketHeader(reader: Reader): (number, number)
 	local cursor = reader.cursor
-	if cursor >= reader.len then return 0, 0 end
+	if cursor >= reader.len then
+		return 0, 0
+	end
 	local packetHeader = buffer_readu8(reader.buff, cursor)
 	reader.cursor = cursor + 1
 	local packetType = bit_rshift(packetHeader, 6)
@@ -1790,7 +2235,9 @@ end
 
 function Buffers.ReadU16(reader: Reader): number
 	local cursor = reader.cursor
-	if cursor + 2 > reader.len then return 0 end
+	if cursor + 2 > reader.len then
+		return 0
+	end
 	local value = buffer_readu16(reader.buff, cursor)
 	reader.cursor = cursor + 2
 	return value
@@ -1805,7 +2252,9 @@ end
 
 function Buffers.ReadU8(reader: Reader): number
 	local cursor = reader.cursor
-	if cursor >= reader.len then return 0 end
+	if cursor >= reader.len then
+		return 0
+	end
 	local value = buffer_readu8(reader.buff, cursor)
 	reader.cursor = cursor + 1
 	return value
