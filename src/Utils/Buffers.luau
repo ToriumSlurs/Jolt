@@ -4,145 +4,6 @@
 
 local Buffers = {}
 
-local buffer_create = buffer.create
-local buffer_len = buffer.len
-local buffer_copy = buffer.copy
-local buffer_readu8 = buffer.readu8
-local buffer_writeu8 = buffer.writeu8
-local buffer_readu16 = buffer.readu16
-local buffer_writeu16 = buffer.writeu16
-local buffer_readu32 = buffer.readu32
-local buffer_writeu32 = buffer.writeu32
-local buffer_readi8 = buffer.readi8
-local buffer_writei8 = buffer.writei8
-local buffer_readi16 = buffer.readi16
-local buffer_writei16 = buffer.writei16
-local buffer_readi32 = buffer.readi32
-local buffer_writei32 = buffer.writei32
-local buffer_readf32 = buffer.readf32
-local buffer_writef32 = buffer.writef32
-local buffer_readf64 = buffer.readf64
-local buffer_writef64 = buffer.writef64
-local buffer_readstring = buffer.readstring
-local buffer_writestring = buffer.writestring
-
-local bit_bor = bit32.bor
-local bit_band = bit32.band
-local bit_lshift = bit32.lshift
-local bit_rshift = bit32.rshift
-
-local table_create = table.create
-local table_insert = table.insert
-local table_clear = table.clear
-local math_max = math.max
-
-local scratchFloatConversionBuffer = buffer_create(8)
-
-local enumItemsByNameCache: { [string]: { [number]: EnumItem } } = {}
-
-local function getCachedEnumItem(enumName: string, enumValue: number): EnumItem?
-	if enumName == "" then
-		return nil
-	end
-	local itemsByValue = enumItemsByNameCache[enumName]
-	if not itemsByValue then
-		local isSuccess, enumType = pcall(function()
-			return (Enum :: any)[enumName]
-		end)
-		if isSuccess and typeof(enumType) == "Enum" then
-			itemsByValue = {}
-			for _, enumItem in (enumType :: Enum):GetEnumItems() do
-				itemsByValue[enumItem.Value] = enumItem
-			end
-			enumItemsByNameCache[enumName] = itemsByValue
-		else
-			return nil
-		end
-	end
-	return itemsByValue[enumValue]
-end
-
-local TAG_NIL = 0
-local TAG_BOOL_F = 1
-local TAG_BOOL_T = 2
-local TAG_U8 = 3
-local TAG_I8 = 4
-local TAG_U16 = 5
-local TAG_I16 = 6
-local TAG_U24 = 7
-local TAG_I24 = 8
-local TAG_U32 = 9
-local TAG_I32 = 10
-local TAG_F16 = 11
-local TAG_F24 = 12
-local TAG_F32 = 13
-local TAG_F64 = 14
-local TAG_STR_U8 = 15
-local TAG_STR_U16 = 16
-local TAG_STR_U32 = 17
-local TAG_BUF_U8 = 18
-local TAG_BUF_U16 = 19
-local TAG_BUF_U32 = 20
-local TAG_VEC2 = 21
-local TAG_VEC3 = 22
-local TAG_CFRAME = 23
-local TAG_CFRAME_NO_ROT = 24
-local TAG_COLOR3 = 25
-local TAG_UDIM = 26
-local TAG_UDIM2 = 27
-local TAG_RAY = 28
-local TAG_RECT = 29
-local TAG_DATETIME = 30
-local TAG_NUM_RANGE = 31
-local TAG_NUM_SEQ = 32
-local TAG_COL_SEQ = 33
-local TAG_ENUM = 34
-local TAG_INST_REF = 35
-local TAG_PHYS_PROPS = 36
-local TAG_REGION3 = 37
-local TAG_BRICKCOLOR = 38
-local TAG_TWEENINFO = 39
-
-local TAG_ARR_U8 = 40
-local TAG_ARR_I8 = 41
-local TAG_ARR_U16 = 42
-local TAG_ARR_I16 = 43
-local TAG_ARR_U32 = 44
-local TAG_ARR_I32 = 45
-local TAG_ARR_F32 = 46
-local TAG_ARR_F64 = 47
-local TAG_ARR_VEC2 = 48
-local TAG_ARR_VEC3 = 49
-local TAG_ARR_CFRAME = 50
-local TAG_ARR_COLOR3 = 51
-local TAG_ARR_BOOL = 52
-local TAG_ARR_STR = 53
-local TAG_ARR_STRUCT_TYPED = 54
-local TAG_ARR_STRUCT = 55
-local TAG_MAP_STR_FAST = 56
-local TAG_MAP_STR_U8 = 57
-local TAG_ARRAY = 58
-local TAG_MAP = 59
-
-local COL_U8 = 1
-local COL_I8 = 2
-local COL_U16 = 3
-local COL_I16 = 4
-local COL_U32 = 5
-local COL_I32 = 6
-local COL_F32 = 7
-local COL_F64 = 8
-local COL_BOOL = 9
-local COL_STR = 10
-local COL_VEC3 = 11
-local COL_CFRAME = 12
-local COL_COLOR3 = 13
-local COL_ANY = 14
-
-local DEFAULT_CAPACITY = 65536
-local MAX_REUSABLE_CAPACITY = 1048576
-local MAX_SERIALIZATION_DEPTH = 64
-
 export type Writer = {
 	buff: buffer,
 	cursor: number,
@@ -157,113 +18,232 @@ export type Reader = {
 	insts: { Instance },
 }
 
+local buffer_create = buffer.create
+local buffer_len = buffer.len
+local buffer_copy = buffer.copy
+local buffer_readu8 = buffer.readu8
+local buffer_writeu8 = buffer.writeu8
+local buffer_readi8 = buffer.readi8
+local buffer_writei8 = buffer.writei8
+local buffer_readu16 = buffer.readu16
+local buffer_writeu16 = buffer.writeu16
+local buffer_readi16 = buffer.readi16
+local buffer_writei16 = buffer.writei16
+local buffer_readu32 = buffer.readu32
+local buffer_writeu32 = buffer.writeu32
+local buffer_readi32 = buffer.readi32
+local buffer_writei32 = buffer.writei32
+local buffer_readf32 = buffer.readf32
+local buffer_writef32 = buffer.writef32
+local buffer_readf64 = buffer.readf64
+local buffer_writef64 = buffer.writef64
+local buffer_readstring = buffer.readstring
+local buffer_writestring = buffer.writestring
+
+local table_create = table.create
+local table_clear = table.clear
+local table_insert = table.insert
+local table_clone = table.clone
+local math_max = math.max
+local bit_lshift = bit32.lshift
+local bit_rshift = bit32.rshift
+local bit_band = bit32.band
+local bit_bor = bit32.bor
+
+local TAG_NIL = 1
+local TAG_BOOL_F = 2
+local TAG_BOOL_T = 3
+local TAG_U8 = 4
+local TAG_U16 = 5
+local TAG_U32 = 6
+local TAG_I8 = 7
+local TAG_I16 = 8
+local TAG_I32 = 9
+local TAG_F32 = 10
+local TAG_F64 = 11
+local TAG_STR_U8 = 12
+local TAG_STR_U16 = 13
+local TAG_STR_U32 = 14
+local TAG_BUF_U32 = 15
+local TAG_VEC3 = 16
+local TAG_VEC2 = 17
+local TAG_CFRAME = 18
+local TAG_COLOR3 = 19
+local TAG_UDIM = 20
+local TAG_UDIM2 = 21
+local TAG_INST_REF = 22
+local TAG_ENUM = 23
+local TAG_BRICKCOLOR = 24
+local TAG_RECT = 25
+local TAG_RAY = 26
+local TAG_NUM_RANGE = 27
+local TAG_DATETIME = 28
+
+local TAG_ARR_U8 = 30
+local TAG_ARR_U16 = 31
+local TAG_ARR_U32 = 32
+local TAG_ARR_I8 = 33
+local TAG_ARR_I16 = 34
+local TAG_ARR_I32 = 35
+local TAG_ARR_F32 = 36
+local TAG_ARR_F64 = 37
+local TAG_ARR_BOOL = 38
+local TAG_ARR_VEC3 = 39
+local TAG_ARR_VEC2 = 40
+local TAG_ARR_COLOR3 = 41
+local TAG_ARR_CFRAME = 42
+local TAG_ARR_STR = 43
+local TAG_ARR_STRUCT_TYPED = 44
+local TAG_MAP_STR_FAST = 45
+local TAG_ARRAY = 46
+local TAG_MAP = 47
+
+local COL_U8 = 1
+local COL_I8 = 2
+local COL_U16 = 3
+local COL_I16 = 4
+local COL_U32 = 5
+local COL_I32 = 6
+local COL_F32 = 7
+local COL_F64 = 8
+local COL_BOOL = 9
+local COL_STR = 10
+local COL_VEC3 = 11
+local COL_COLOR3 = 12
+local COL_CFRAME = 13
+local COL_ANY = 14
+
+local DEFAULT_CAPACITY = 1024
+local MAX_REUSABLE_CAPACITY = 262144
+local MAX_SERIALIZATION_DEPTH = 32
+
 local writerMemoryPool: { Writer } = {}
 local readerMemoryPool: { Reader } = {}
 
-local function expandWriterBuffer(writer: Writer, additionalBytes: number)
-	local currentLength = writer.len
-	local requiredLength = writer.cursor + additionalBytes
-	local nextPowerOfTwo = math_max(currentLength * 2, 1024)
-	while nextPowerOfTwo < requiredLength do
-		nextPowerOfTwo *= 2
+local scratchFloatConversionBuffer = buffer_create(4)
+
+local enumCache: { [string]: { [number]: EnumItem } } = {}
+
+local function getCachedEnumItem(enumName: string, enumValue: number): EnumItem?
+	local enumCategory = enumCache[enumName]
+	if not enumCategory then
+		enumCategory = {}
+		enumCache[enumName] = enumCategory
+		local foundEnum = (Enum :: any)[enumName]
+		if foundEnum then
+			for _, enumItem in foundEnum:GetEnumItems() do
+				enumCategory[enumItem.Value] = enumItem
+			end
+		end
 	end
-	local newlyAllocatedBuffer = buffer_create(nextPowerOfTwo)
-	buffer_copy(newlyAllocatedBuffer, 0, writer.buff, 0, writer.cursor)
-	writer.buff = newlyAllocatedBuffer
-	writer.len = nextPowerOfTwo
+	return enumCategory[enumValue]
 end
 
-local function ensureCapacity(writer: Writer, requiredBytes: number)
-	if writer.cursor + requiredBytes > writer.len then
-		expandWriterBuffer(writer, requiredBytes)
+local function ensureCapacity(writer: Writer, requiredAdditionalBytes: number)
+	local targetCapacity = writer.cursor + requiredAdditionalBytes
+	if targetCapacity <= writer.len then
+		return
 	end
+	local currentCapacity = math_max(writer.len, 64)
+	while targetCapacity > currentCapacity do
+		currentCapacity *= 2
+	end
+	local expandedBuffer = buffer_create(currentCapacity)
+	buffer_copy(expandedBuffer, 0, writer.buff, 0, writer.cursor)
+	writer.buff = expandedBuffer
+	writer.len = currentCapacity
 end
 
-local function writeVariableInteger(writer: Writer, integerValue: number)
-	if integerValue < 128 then
-		ensureCapacity(writer, 1)
-		local cursor = writer.cursor
-		buffer_writeu8(writer.buff, cursor, integerValue)
-		writer.cursor = cursor + 1
-		return
-	elseif integerValue < 16384 then
-		ensureCapacity(writer, 2)
-		local cursor = writer.cursor
-		local targetBuffer = writer.buff
-		buffer_writeu8(targetBuffer, cursor, bit_bor(bit_band(integerValue, 0x7F), 0x80))
-		buffer_writeu8(targetBuffer, cursor + 1, bit_rshift(integerValue, 7))
-		writer.cursor = cursor + 2
-		return
-	elseif integerValue < 2097152 then
-		ensureCapacity(writer, 3)
-		local cursor = writer.cursor
-		local targetBuffer = writer.buff
-		buffer_writeu8(targetBuffer, cursor, bit_bor(bit_band(integerValue, 0x7F), 0x80))
-		buffer_writeu8(targetBuffer, cursor + 1, bit_bor(bit_band(bit_rshift(integerValue, 7), 0x7F), 0x80))
-		buffer_writeu8(targetBuffer, cursor + 2, bit_rshift(integerValue, 14))
-		writer.cursor = cursor + 3
-		return
-	end
+local function writeVariableInteger(writer: Writer, numericValue: number)
 	ensureCapacity(writer, 5)
-	local targetBuffer = writer.buff
 	local cursor = writer.cursor
-	local remainingValue = integerValue
-	while remainingValue >= 128 do
-		buffer_writeu8(targetBuffer, cursor, bit_bor(bit_band(remainingValue, 0x7F), 0x80))
-		cursor += 1
-		remainingValue = bit_rshift(remainingValue, 7)
+	local targetBuffer = writer.buff
+	if numericValue < 128 then
+		buffer_writeu8(targetBuffer, cursor, numericValue)
+		writer.cursor = cursor + 1
+	elseif numericValue < 16384 then
+		buffer_writeu8(targetBuffer, cursor, bit_bor(bit_band(numericValue, 0x7F), 0x80))
+		buffer_writeu8(targetBuffer, cursor + 1, bit_rshift(numericValue, 7))
+		writer.cursor = cursor + 2
+	elseif numericValue < 2097152 then
+		buffer_writeu8(targetBuffer, cursor, bit_bor(bit_band(numericValue, 0x7F), 0x80))
+		buffer_writeu8(targetBuffer, cursor + 1, bit_bor(bit_band(bit_rshift(numericValue, 7), 0x7F), 0x80))
+		buffer_writeu8(targetBuffer, cursor + 2, bit_rshift(numericValue, 14))
+		writer.cursor = cursor + 3
+	else
+		buffer_writeu8(targetBuffer, cursor, bit_bor(bit_band(numericValue, 0x7F), 0x80))
+		buffer_writeu8(targetBuffer, cursor + 1, bit_bor(bit_band(bit_rshift(numericValue, 7), 0x7F), 0x80))
+		buffer_writeu8(targetBuffer, cursor + 2, bit_bor(bit_band(bit_rshift(numericValue, 14), 0x7F), 0x80))
+		buffer_writeu8(targetBuffer, cursor + 3, bit_bor(bit_band(bit_rshift(numericValue, 21), 0x7F), 0x80))
+		buffer_writeu8(targetBuffer, cursor + 4, bit_rshift(numericValue, 28))
+		writer.cursor = cursor + 5
 	end
-	buffer_writeu8(targetBuffer, cursor, remainingValue)
-	writer.cursor = cursor + 1
 end
 
 local function readVariableInteger(reader: Reader): number
 	local cursor = reader.cursor
+	local sourceBuffer = reader.buff
 	if cursor >= reader.len then
 		return 0
 	end
-	local sourceBuffer = reader.buff
-	local firstByte = buffer_readu8(sourceBuffer, cursor)
-	if firstByte < 128 then
+	local byte0 = buffer_readu8(sourceBuffer, cursor)
+	if byte0 < 128 then
 		reader.cursor = cursor + 1
-		return firstByte
+		return byte0
 	end
-	if cursor + 1 < reader.len then
-		local secondByte = buffer_readu8(sourceBuffer, cursor + 1)
-		if secondByte < 128 then
-			reader.cursor = cursor + 2
-			return bit_bor(bit_band(firstByte, 0x7F), bit_lshift(secondByte, 7))
-		end
-		if cursor + 2 < reader.len then
-			local thirdByte = buffer_readu8(sourceBuffer, cursor + 2)
-			if thirdByte < 128 then
-				reader.cursor = cursor + 3
-				return bit_bor(
-					bit_band(firstByte, 0x7F),
-					bit_lshift(bit_band(secondByte, 0x7F), 7),
-					bit_lshift(thirdByte, 14)
-				)
-			end
-		end
+	if cursor + 1 >= reader.len then
+		reader.cursor = cursor + 1
+		return bit_band(byte0, 0x7F)
 	end
-	local totalAccumulated = 0
-	local bitShiftAmount = 0
-	repeat
-		if cursor >= reader.len then
-			reader.cursor = reader.len
-			return totalAccumulated
-		end
-		local currentByte = buffer_readu8(sourceBuffer, cursor)
-		cursor += 1
-		totalAccumulated = bit_bor(totalAccumulated, bit_lshift(bit_band(currentByte, 0x7F), bitShiftAmount))
-		bitShiftAmount += 7
-	until bit_band(currentByte, 0x80) == 0
-	reader.cursor = cursor
-	return totalAccumulated
+	local byte1 = buffer_readu8(sourceBuffer, cursor + 1)
+	if byte1 < 128 then
+		reader.cursor = cursor + 2
+		return bit_bor(bit_band(byte0, 0x7F), bit_lshift(byte1, 7))
+	end
+	if cursor + 2 >= reader.len then
+		reader.cursor = cursor + 2
+		return bit_bor(bit_band(byte0, 0x7F), bit_lshift(bit_band(byte1, 0x7F), 7))
+	end
+	local byte2 = buffer_readu8(sourceBuffer, cursor + 2)
+	if byte2 < 128 then
+		reader.cursor = cursor + 3
+		return bit_bor(bit_band(byte0, 0x7F), bit_lshift(bit_band(byte1, 0x7F), 7), bit_lshift(byte2, 14))
+	end
+	if cursor + 3 >= reader.len then
+		reader.cursor = cursor + 3
+		return bit_bor(bit_band(byte0, 0x7F), bit_lshift(bit_band(byte1, 0x7F), 7), bit_lshift(bit_band(byte2, 0x7F), 14))
+	end
+	local byte3 = buffer_readu8(sourceBuffer, cursor + 3)
+	if byte3 < 128 then
+		reader.cursor = cursor + 4
+		return bit_bor(bit_band(byte0, 0x7F), bit_lshift(bit_band(byte1, 0x7F), 7), bit_lshift(bit_band(byte2, 0x7F), 14), bit_lshift(byte3, 21))
+	end
+	if cursor + 4 >= reader.len then
+		reader.cursor = cursor + 4
+		return bit_bor(bit_band(byte0, 0x7F), bit_lshift(bit_band(byte1, 0x7F), 7), bit_lshift(bit_band(byte2, 0x7F), 14), bit_lshift(bit_band(byte3, 0x7F), 21))
+	end
+	local byte4 = buffer_readu8(sourceBuffer, cursor + 4)
+	reader.cursor = cursor + 5
+	return bit_bor(bit_band(byte0, 0x7F), bit_lshift(bit_band(byte1, 0x7F), 7), bit_lshift(bit_band(byte2, 0x7F), 14), bit_lshift(bit_band(byte3, 0x7F), 21), bit_lshift(byte4, 28))
 end
 
 local writeAnyValue: (writer: Writer, targetValue: any, currentDepth: number) -> ()
 local readAnyValue: (reader: Reader, currentDepth: number) -> any
+
+local function isDenseArray(t: { [any]: any }): (boolean, number)
+	local len = #t
+	if len == 0 or t[1] == nil then
+		return false, 0
+	end
+	local count = 0
+	for _ in pairs(t) do
+		count += 1
+		if count > len then
+			return false, count
+		end
+	end
+	return count == len, count
+end
 
 local function writeVector3Array(writer: Writer, targetTable: { [any]: any }, arrayLength: number): boolean
 	local origCursor = writer.cursor
@@ -283,12 +263,19 @@ local function writeVector3Array(writer: Writer, targetTable: { [any]: any }, ar
 		local v1 = targetTable[index + 1]
 		local v2 = targetTable[index + 2]
 		local v3 = targetTable[index + 3]
-		if
-			(type(v0) ~= "vector" and typeof(v0) ~= "Vector3")
-			or (type(v1) ~= "vector" and typeof(v1) ~= "Vector3")
-			or (type(v2) ~= "vector" and typeof(v2) ~= "Vector3")
-			or (type(v3) ~= "vector" and typeof(v3) ~= "Vector3")
-		then
+		if type(v0) ~= "vector" and typeof(v0) ~= "Vector3" then
+			writer.cursor = origCursor
+			return false
+		end
+		if type(v1) ~= "vector" and typeof(v1) ~= "Vector3" then
+			writer.cursor = origCursor
+			return false
+		end
+		if type(v2) ~= "vector" and typeof(v2) ~= "Vector3" then
+			writer.cursor = origCursor
+			return false
+		end
+		if type(v3) ~= "vector" and typeof(v3) ~= "Vector3" then
 			writer.cursor = origCursor
 			return false
 		end
@@ -476,7 +463,6 @@ local function writeNumberArray(
 	arrayLength: number,
 	firstElement: number
 ): boolean
-	local origCursor = writer.cursor
 	local allInt = true
 	local minVal = firstElement
 	local maxVal = firstElement
@@ -767,124 +753,6 @@ local function writeStringArray(writer: Writer, targetTable: { [any]: any }, arr
 	return true
 end
 
-local function inferColumnType(targetTable: { [any]: any }, arrayLength: number, key: string): number
-	local firstVal = targetTable[1][key]
-	local vType = type(firstVal)
-	if vType == "number" then
-		local allInt = true
-		local minVal = firstVal
-		local maxVal = firstVal
-		local allF32Lossless = true
-		for i = 1, arrayLength do
-			local row = targetTable[i]
-			if type(row) ~= "table" then
-				return COL_ANY
-			end
-			local val = row[key]
-			if type(val) ~= "number" then
-				return COL_ANY
-			end
-			if allInt then
-				if val % 1 ~= 0 then
-					allInt = false
-				else
-					if val < minVal then
-						minVal = val
-					end
-					if val > maxVal then
-						maxVal = val
-					end
-				end
-			end
-			if not allInt and allF32Lossless then
-				buffer_writef32(scratchFloatConversionBuffer, 0, val)
-				if buffer_readf32(scratchFloatConversionBuffer, 0) ~= val then
-					allF32Lossless = false
-				end
-			end
-		end
-
-		if allInt then
-			if minVal >= 0 then
-				if maxVal <= 255 then
-					return COL_U8
-				elseif maxVal <= 65535 then
-					return COL_U16
-				elseif maxVal <= 4294967295 then
-					return COL_U32
-				else
-					return COL_F64
-				end
-			else
-				if minVal >= -128 and maxVal <= 127 then
-					return COL_I8
-				elseif minVal >= -32768 and maxVal <= 32767 then
-					return COL_I16
-				elseif minVal >= -2147483648 and maxVal <= 2147483647 then
-					return COL_I32
-				else
-					return COL_F64
-				end
-			end
-		else
-			if allF32Lossless then
-				return COL_F32
-			else
-				return COL_F64
-			end
-		end
-	elseif vType == "boolean" then
-		for i = 1, arrayLength do
-			local row = targetTable[i]
-			if type(row) ~= "table" or type(row[key]) ~= "boolean" then
-				return COL_ANY
-			end
-		end
-		return COL_BOOL
-	elseif vType == "string" then
-		for i = 1, arrayLength do
-			local row = targetTable[i]
-			if type(row) ~= "table" then
-				return COL_ANY
-			end
-			local val = row[key]
-			if type(val) ~= "string" or #val > 255 then
-				return COL_ANY
-			end
-		end
-		return COL_STR
-	elseif vType == "vector" or typeof(firstVal) == "Vector3" then
-		for i = 1, arrayLength do
-			local row = targetTable[i]
-			if type(row) ~= "table" then
-				return COL_ANY
-			end
-			local val = row[key]
-			if type(val) ~= "vector" and typeof(val) ~= "Vector3" then
-				return COL_ANY
-			end
-		end
-		return COL_VEC3
-	elseif typeof(firstVal) == "CFrame" then
-		for i = 1, arrayLength do
-			local row = targetTable[i]
-			if type(row) ~= "table" or typeof(row[key]) ~= "CFrame" then
-				return COL_ANY
-			end
-		end
-		return COL_CFRAME
-	elseif typeof(firstVal) == "Color3" then
-		for i = 1, arrayLength do
-			local row = targetTable[i]
-			if type(row) ~= "table" or typeof(row[key]) ~= "Color3" then
-				return COL_ANY
-			end
-		end
-		return COL_COLOR3
-	end
-	return COL_ANY
-end
-
 local function writeDynamicStructArray(
 	writer: Writer,
 	targetTable: { [any]: any },
@@ -892,16 +760,96 @@ local function writeDynamicStructArray(
 	firstElement: { [any]: any },
 	currentDepth: number
 ): boolean
+	local origCursor = writer.cursor
 	local keys = {}
+	local keyLookup = {}
 	local colTypes = {}
+	local colSizes = {}
 	local keyCount = 0
-	for k in pairs(firstElement) do
+	local fixedRowStride = 0
+	local allFixedPrimitives = true
+
+	for k, val in pairs(firstElement) do
 		if type(k) ~= "string" or #k > 255 then
 			return false
 		end
 		keyCount += 1
 		keys[keyCount] = k
-		colTypes[keyCount] = inferColumnType(targetTable, arrayLength, k)
+		keyLookup[k] = true
+
+		local cType = COL_ANY
+		local vType = type(val)
+		if vType == "number" then
+			local minVal = val
+			local maxVal = val
+			local allInt = true
+			for i = 1, arrayLength do
+				local rowVal = targetTable[i][k]
+				if type(rowVal) ~= "number" then
+					allInt = false
+					break
+				end
+				if rowVal % 1 ~= 0 then
+					allInt = false
+				else
+					if rowVal < minVal then minVal = rowVal end
+					if rowVal > maxVal then maxVal = rowVal end
+				end
+			end
+			if not allInt then
+				cType = COL_F32
+			elseif minVal >= 0 and maxVal <= 255 then
+				cType = COL_U8
+			elseif minVal >= 0 and maxVal <= 65535 then
+				cType = COL_U16
+			elseif minVal >= 0 and maxVal <= 4294967295 then
+				cType = COL_U32
+			elseif minVal >= -128 and maxVal <= 127 then
+				cType = COL_I8
+			elseif minVal >= -32768 and maxVal <= 32767 then
+				cType = COL_I16
+			elseif minVal >= -2147483648 and maxVal <= 2147483647 then
+				cType = COL_I32
+			else
+				cType = COL_F64
+			end
+		elseif vType == "boolean" then
+			cType = COL_BOOL
+		elseif vType == "string" then
+			cType = COL_STR
+		elseif vType == "vector" or typeof(val) == "Vector3" then
+			cType = COL_VEC3
+		elseif typeof(val) == "CFrame" then
+			cType = COL_CFRAME
+		elseif typeof(val) == "Color3" then
+			cType = COL_COLOR3
+		end
+
+		colTypes[keyCount] = cType
+		if cType == COL_U8 or cType == COL_I8 or cType == COL_BOOL then
+			colSizes[keyCount] = 1
+			fixedRowStride += 1
+		elseif cType == COL_U16 or cType == COL_I16 then
+			colSizes[keyCount] = 2
+			fixedRowStride += 2
+		elseif cType == COL_U32 or cType == COL_I32 or cType == COL_F32 then
+			colSizes[keyCount] = 4
+			fixedRowStride += 4
+		elseif cType == COL_F64 then
+			colSizes[keyCount] = 8
+			fixedRowStride += 8
+		elseif cType == COL_VEC3 then
+			colSizes[keyCount] = 12
+			fixedRowStride += 12
+		elseif cType == COL_COLOR3 then
+			colSizes[keyCount] = 3
+			fixedRowStride += 3
+		elseif cType == COL_CFRAME then
+			colSizes[keyCount] = 48
+			fixedRowStride += 48
+		else
+			allFixedPrimitives = false
+		end
 	end
 	if keyCount == 0 or keyCount > 32 then
 		return false
@@ -911,7 +859,7 @@ local function writeDynamicStructArray(
 	for i = 1, keyCount do
 		headerBytes += (2 + #keys[i])
 	end
-	ensureCapacity(writer, 7 + headerBytes + arrayLength * 64)
+	ensureCapacity(writer, 7 + headerBytes + arrayLength * (if allFixedPrimitives then fixedRowStride else 64))
 	local targetBuffer = writer.buff
 	local cursor = writer.cursor
 	buffer_writeu8(targetBuffer, cursor, TAG_ARR_STRUCT_TYPED)
@@ -933,11 +881,25 @@ local function writeDynamicStructArray(
 	for index = 1, arrayLength do
 		local row = targetTable[index]
 		if type(row) ~= "table" then
+			writer.cursor = origCursor
 			return false
 		end
+		local rowKeyCount = 0
+		for k in pairs(row) do
+			rowKeyCount += 1
+			if not keyLookup[k] then
+				writer.cursor = origCursor
+				return false
+			end
+		end
+		if rowKeyCount ~= keyCount then
+			writer.cursor = origCursor
+			return false
+		end
+
 		if cursor + 128 > writer.len then
 			writer.cursor = cursor
-			ensureCapacity(writer, 128 + (arrayLength - index) * 64)
+			ensureCapacity(writer, 128 + (arrayLength - index) * (if allFixedPrimitives then fixedRowStride else 64))
 			targetBuffer = writer.buff
 			cursor = writer.cursor
 		end
@@ -1024,7 +986,7 @@ local function writeDictionarySinglePass(writer: Writer, targetTable: { [any]: a
 	ensureCapacity(writer, 65536)
 	local targetBuffer = writer.buff
 	buffer_writeu8(targetBuffer, startCursor, TAG_MAP_STR_FAST)
-	local cursor = startCursor + 5 -- Reserve 4 bytes for count
+	local cursor = startCursor + 5
 	writer.cursor = cursor
 
 	local entryCount = 0
@@ -1126,8 +1088,8 @@ local function writeDictionarySinglePass(writer: Writer, targetTable: { [any]: a
 end
 
 local function writeTableValue(writer: Writer, targetTable: { [any]: any }, currentDepth: number)
-	local arrayLength = #targetTable
-	if arrayLength > 0 and targetTable[1] ~= nil and targetTable[arrayLength + 1] == nil then
+	local isDense, arrayLength = isDenseArray(targetTable)
+	if isDense then
 		local firstElement = targetTable[1]
 		local elementType = type(firstElement)
 		if elementType == "vector" then
@@ -1494,26 +1456,22 @@ local function readTableValue(reader: Reader, tagByte: number, currentDepth: num
 		local rem = count % 16
 		local unrolled = count - rem
 		for index = 1, unrolled, 16 do
-			local u0 = buffer_readu32(sourceBuffer, cursor)
-			local u1 = buffer_readu32(sourceBuffer, cursor + 4)
-			local u2 = buffer_readu32(sourceBuffer, cursor + 8)
-			local u3 = buffer_readu32(sourceBuffer, cursor + 12)
-			arrayResult[index] = bit_band(u0, 0xFF)
-			arrayResult[index + 1] = bit_band(bit_rshift(u0, 8), 0xFF)
-			arrayResult[index + 2] = bit_band(bit_rshift(u0, 16), 0xFF)
-			arrayResult[index + 3] = bit_rshift(u0, 24)
-			arrayResult[index + 4] = bit_band(u1, 0xFF)
-			arrayResult[index + 5] = bit_band(bit_rshift(u1, 8), 0xFF)
-			arrayResult[index + 6] = bit_band(bit_rshift(u1, 16), 0xFF)
-			arrayResult[index + 7] = bit_rshift(u1, 24)
-			arrayResult[index + 8] = bit_band(u2, 0xFF)
-			arrayResult[index + 9] = bit_band(bit_rshift(u2, 8), 0xFF)
-			arrayResult[index + 10] = bit_band(bit_rshift(u2, 16), 0xFF)
-			arrayResult[index + 11] = bit_rshift(u2, 24)
-			arrayResult[index + 12] = bit_band(u3, 0xFF)
-			arrayResult[index + 13] = bit_band(bit_rshift(u3, 8), 0xFF)
-			arrayResult[index + 14] = bit_band(bit_rshift(u3, 16), 0xFF)
-			arrayResult[index + 15] = bit_rshift(u3, 24)
+			arrayResult[index] = buffer_readu8(sourceBuffer, cursor)
+			arrayResult[index + 1] = buffer_readu8(sourceBuffer, cursor + 1)
+			arrayResult[index + 2] = buffer_readu8(sourceBuffer, cursor + 2)
+			arrayResult[index + 3] = buffer_readu8(sourceBuffer, cursor + 3)
+			arrayResult[index + 4] = buffer_readu8(sourceBuffer, cursor + 4)
+			arrayResult[index + 5] = buffer_readu8(sourceBuffer, cursor + 5)
+			arrayResult[index + 6] = buffer_readu8(sourceBuffer, cursor + 6)
+			arrayResult[index + 7] = buffer_readu8(sourceBuffer, cursor + 7)
+			arrayResult[index + 8] = buffer_readu8(sourceBuffer, cursor + 8)
+			arrayResult[index + 9] = buffer_readu8(sourceBuffer, cursor + 9)
+			arrayResult[index + 10] = buffer_readu8(sourceBuffer, cursor + 10)
+			arrayResult[index + 11] = buffer_readu8(sourceBuffer, cursor + 11)
+			arrayResult[index + 12] = buffer_readu8(sourceBuffer, cursor + 12)
+			arrayResult[index + 13] = buffer_readu8(sourceBuffer, cursor + 13)
+			arrayResult[index + 14] = buffer_readu8(sourceBuffer, cursor + 14)
+			arrayResult[index + 15] = buffer_readu8(sourceBuffer, cursor + 15)
 			cursor += 16
 		end
 		for index = unrolled + 1, count do
@@ -1772,89 +1730,173 @@ local function readTableValue(reader: Reader, tagByte: number, currentDepth: num
 		cursor += 1
 		local keys = table_create(keyCount) :: { string }
 		local colTypes = table_create(keyCount) :: { number }
+		local colOffsets = table_create(keyCount) :: { number }
+		local fixedRowStride = 0
+		local isAllFixed = true
+
 		for kIdx = 1, keyCount do
 			local kLen = buffer_readu8(sourceBuffer, cursor)
 			keys[kIdx] = buffer_readstring(sourceBuffer, cursor + 1, kLen)
-			colTypes[kIdx] = buffer_readu8(sourceBuffer, cursor + 1 + kLen)
+			local cType = buffer_readu8(sourceBuffer, cursor + 1 + kLen)
+			colTypes[kIdx] = cType
+			colOffsets[kIdx] = fixedRowStride
+			if cType == COL_U8 or cType == COL_I8 or cType == COL_BOOL then
+				fixedRowStride += 1
+			elseif cType == COL_U16 or cType == COL_I16 then
+				fixedRowStride += 2
+			elseif cType == COL_U32 or cType == COL_I32 or cType == COL_F32 then
+				fixedRowStride += 4
+			elseif cType == COL_F64 then
+				fixedRowStride += 8
+			elseif cType == COL_VEC3 then
+				fixedRowStride += 12
+			elseif cType == COL_COLOR3 then
+				fixedRowStride += 3
+			elseif cType == COL_CFRAME then
+				fixedRowStride += 48
+			else
+				isAllFixed = false
+			end
 			cursor += 2 + kLen
 		end
 
 		local arrayResult = table_create(elementCount) :: { { [string]: any } }
-		for i = 1, elementCount do
-			if cursor >= reader.len then
-				break
-			end
-			local row: { [string]: any } = {}
-			for kIdx = 1, keyCount do
-				local cType = colTypes[kIdx]
-				if cType == COL_U8 then
-					row[keys[kIdx]] = buffer_readu8(sourceBuffer, cursor)
-					cursor += 1
-				elseif cType == COL_I8 then
-					row[keys[kIdx]] = buffer_readi8(sourceBuffer, cursor)
-					cursor += 1
-				elseif cType == COL_U16 then
-					row[keys[kIdx]] = buffer_readu16(sourceBuffer, cursor)
-					cursor += 2
-				elseif cType == COL_I16 then
-					row[keys[kIdx]] = buffer_readi16(sourceBuffer, cursor)
-					cursor += 2
-				elseif cType == COL_U32 then
-					row[keys[kIdx]] = buffer_readu32(sourceBuffer, cursor)
-					cursor += 4
-				elseif cType == COL_I32 then
-					row[keys[kIdx]] = buffer_readi32(sourceBuffer, cursor)
-					cursor += 4
-				elseif cType == COL_F32 then
-					row[keys[kIdx]] = buffer_readf32(sourceBuffer, cursor)
-					cursor += 4
-				elseif cType == COL_F64 then
-					row[keys[kIdx]] = buffer_readf64(sourceBuffer, cursor)
-					cursor += 8
-				elseif cType == COL_BOOL then
-					row[keys[kIdx]] = buffer_readu8(sourceBuffer, cursor) == 1
-					cursor += 1
-				elseif cType == COL_STR then
-					local sLen = buffer_readu8(sourceBuffer, cursor)
-					row[keys[kIdx]] = if sLen > 0 then buffer_readstring(sourceBuffer, cursor + 1, sLen) else ""
-					cursor += 1 + sLen
-				elseif cType == COL_VEC3 then
-					row[keys[kIdx]] = Vector3.new(
-						buffer_readf32(sourceBuffer, cursor),
-						buffer_readf32(sourceBuffer, cursor + 4),
-						buffer_readf32(sourceBuffer, cursor + 8)
-					)
-					cursor += 12
-				elseif cType == COL_COLOR3 then
-					row[keys[kIdx]] = Color3.fromRGB(
-						buffer_readu8(sourceBuffer, cursor),
-						buffer_readu8(sourceBuffer, cursor + 1),
-						buffer_readu8(sourceBuffer, cursor + 2)
-					)
-					cursor += 3
-				elseif cType == COL_CFRAME then
-					row[keys[kIdx]] = CFrame.new(
-						buffer_readf32(sourceBuffer, cursor),
-						buffer_readf32(sourceBuffer, cursor + 4),
-						buffer_readf32(sourceBuffer, cursor + 8),
-						buffer_readf32(sourceBuffer, cursor + 12),
-						buffer_readf32(sourceBuffer, cursor + 16),
-						buffer_readf32(sourceBuffer, cursor + 20),
-						buffer_readf32(sourceBuffer, cursor + 24),
-						buffer_readf32(sourceBuffer, cursor + 28),
-						buffer_readf32(sourceBuffer, cursor + 32),
-						buffer_readf32(sourceBuffer, cursor + 36),
-						buffer_readf32(sourceBuffer, cursor + 40),
-						buffer_readf32(sourceBuffer, cursor + 44)
-					)
-					cursor += 48
-				else
-					reader.cursor = cursor
-					row[keys[kIdx]] = readAnyValue(reader, currentDepth + 1)
-					cursor = reader.cursor
+		if isAllFixed then
+			for i = 1, elementCount do
+				if cursor >= reader.len then
+					break
 				end
+				local row: { [string]: any } = {}
+				for kIdx = 1, keyCount do
+					local cType = colTypes[kIdx]
+					local off = cursor + colOffsets[kIdx]
+					if cType == COL_F32 then
+						row[keys[kIdx]] = buffer_readf32(sourceBuffer, off)
+					elseif cType == COL_U16 then
+						row[keys[kIdx]] = buffer_readu16(sourceBuffer, off)
+					elseif cType == COL_U8 then
+						row[keys[kIdx]] = buffer_readu8(sourceBuffer, off)
+					elseif cType == COL_U32 then
+						row[keys[kIdx]] = buffer_readu32(sourceBuffer, off)
+					elseif cType == COL_I32 then
+						row[keys[kIdx]] = buffer_readi32(sourceBuffer, off)
+					elseif cType == COL_I16 then
+						row[keys[kIdx]] = buffer_readi16(sourceBuffer, off)
+					elseif cType == COL_I8 then
+						row[keys[kIdx]] = buffer_readi8(sourceBuffer, off)
+					elseif cType == COL_F64 then
+						row[keys[kIdx]] = buffer_readf64(sourceBuffer, off)
+					elseif cType == COL_BOOL then
+						row[keys[kIdx]] = buffer_readu8(sourceBuffer, off) == 1
+					elseif cType == COL_VEC3 then
+						row[keys[kIdx]] = Vector3.new(
+							buffer_readf32(sourceBuffer, off),
+							buffer_readf32(sourceBuffer, off + 4),
+							buffer_readf32(sourceBuffer, off + 8)
+						)
+					elseif cType == COL_COLOR3 then
+						row[keys[kIdx]] = Color3.fromRGB(
+							buffer_readu8(sourceBuffer, off),
+							buffer_readu8(sourceBuffer, off + 1),
+							buffer_readu8(sourceBuffer, off + 2)
+						)
+					elseif cType == COL_CFRAME then
+						row[keys[kIdx]] = CFrame.new(
+							buffer_readf32(sourceBuffer, off),
+							buffer_readf32(sourceBuffer, off + 4),
+							buffer_readf32(sourceBuffer, off + 8),
+							buffer_readf32(sourceBuffer, off + 12),
+							buffer_readf32(sourceBuffer, off + 16),
+							buffer_readf32(sourceBuffer, off + 20),
+							buffer_readf32(sourceBuffer, off + 24),
+							buffer_readf32(sourceBuffer, off + 28),
+							buffer_readf32(sourceBuffer, off + 32),
+							buffer_readf32(sourceBuffer, off + 36),
+							buffer_readf32(sourceBuffer, off + 40),
+							buffer_readf32(sourceBuffer, off + 44)
+						)
+					end
+				end
+				arrayResult[i] = row
+				cursor += fixedRowStride
 			end
-			arrayResult[i] = row
+		else
+			for i = 1, elementCount do
+				if cursor >= reader.len then
+					break
+				end
+				local row: { [string]: any } = {}
+				for kIdx = 1, keyCount do
+					local cType = colTypes[kIdx]
+					if cType == COL_U8 then
+						row[keys[kIdx]] = buffer_readu8(sourceBuffer, cursor)
+						cursor += 1
+					elseif cType == COL_I8 then
+						row[keys[kIdx]] = buffer_readi8(sourceBuffer, cursor)
+						cursor += 1
+					elseif cType == COL_U16 then
+						row[keys[kIdx]] = buffer_readu16(sourceBuffer, cursor)
+						cursor += 2
+					elseif cType == COL_I16 then
+						row[keys[kIdx]] = buffer_readi16(sourceBuffer, cursor)
+						cursor += 2
+					elseif cType == COL_U32 then
+						row[keys[kIdx]] = buffer_readu32(sourceBuffer, cursor)
+						cursor += 4
+					elseif cType == COL_I32 then
+						row[keys[kIdx]] = buffer_readi32(sourceBuffer, cursor)
+						cursor += 4
+					elseif cType == COL_F32 then
+						row[keys[kIdx]] = buffer_readf32(sourceBuffer, cursor)
+						cursor += 4
+					elseif cType == COL_F64 then
+						row[keys[kIdx]] = buffer_readf64(sourceBuffer, cursor)
+						cursor += 8
+					elseif cType == COL_BOOL then
+						row[keys[kIdx]] = buffer_readu8(sourceBuffer, cursor) == 1
+						cursor += 1
+					elseif cType == COL_STR then
+						local sLen = buffer_readu8(sourceBuffer, cursor)
+						row[keys[kIdx]] = if sLen > 0 then buffer_readstring(sourceBuffer, cursor + 1, sLen) else ""
+						cursor += 1 + sLen
+					elseif cType == COL_VEC3 then
+						row[keys[kIdx]] = Vector3.new(
+							buffer_readf32(sourceBuffer, cursor),
+							buffer_readf32(sourceBuffer, cursor + 4),
+							buffer_readf32(sourceBuffer, cursor + 8)
+						)
+						cursor += 12
+					elseif cType == COL_COLOR3 then
+						row[keys[kIdx]] = Color3.fromRGB(
+							buffer_readu8(sourceBuffer, cursor),
+							buffer_readu8(sourceBuffer, cursor + 1),
+							buffer_readu8(sourceBuffer, cursor + 2)
+						)
+						cursor += 3
+					elseif cType == COL_CFRAME then
+						row[keys[kIdx]] = CFrame.new(
+							buffer_readf32(sourceBuffer, cursor),
+							buffer_readf32(sourceBuffer, cursor + 4),
+							buffer_readf32(sourceBuffer, cursor + 8),
+							buffer_readf32(sourceBuffer, cursor + 12),
+							buffer_readf32(sourceBuffer, cursor + 16),
+							buffer_readf32(sourceBuffer, cursor + 20),
+							buffer_readf32(sourceBuffer, cursor + 24),
+							buffer_readf32(sourceBuffer, cursor + 28),
+							buffer_readf32(sourceBuffer, cursor + 32),
+							buffer_readf32(sourceBuffer, cursor + 36),
+							buffer_readf32(sourceBuffer, cursor + 40),
+							buffer_readf32(sourceBuffer, cursor + 44)
+						)
+						cursor += 48
+					else
+						reader.cursor = cursor
+						row[keys[kIdx]] = readAnyValue(reader, currentDepth + 1)
+						cursor = reader.cursor
+					end
+				end
+				arrayResult[i] = row
+			end
 		end
 		reader.cursor = cursor
 		return arrayResult
@@ -2180,7 +2222,7 @@ function Buffers.Finalize(writer: Writer): (buffer, { Instance }?)
 	local targetBuffer = buffer_create(cursor)
 	buffer_copy(targetBuffer, 0, writer.buff, 0, cursor)
 	local instancesCount = #writer.insts
-	local instanceReferences = if instancesCount > 0 then table.clone(writer.insts) else nil
+	local instanceReferences = if instancesCount > 0 then table_clone(writer.insts) else nil
 	return targetBuffer, instanceReferences
 end
 

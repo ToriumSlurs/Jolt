@@ -25,16 +25,18 @@ local coroutine_running = coroutine.running
 local coroutine_yield = coroutine.yield
 local coroutine_status = coroutine.status
 local table_pack = table.pack
+local table_create = table.create
+local table_clear = table.clear
 local math_max = math.max
 
 local Buffers_ReadPacketHeader = Buffers.ReadPacketHeader
+local Buffers_ReadEventHeader = Buffers.ReadEventHeader
 local Buffers_ReadAny = Buffers.ReadAny
 local Buffers_ReadU16 = Buffers.ReadU16
 local Buffers_CreateReader = Buffers.CreateReader
 local Buffers_FreeReader = Buffers.FreeReader
 local Buffers_WriteU16 = Buffers.WriteU16
 local Buffers_WritePacketHeader = Buffers.WritePacketHeader
-local Buffers_ReadEventHeader = Buffers.ReadEventHeader
 local Buffers_WriteAny = Buffers.WriteAny
 local Bridge_ClientWriter = Bridge.ClientWriter
 local Hash_HashName = Hash.HashName
@@ -126,7 +128,7 @@ local function onClientNetworkEvent(rawBuffer: buffer, instanceList: { Instance 
 			if isClean then
 				validInstances = instanceList
 			else
-				local cleanList = table.create(instanceCount) :: { Instance }
+				local cleanList = table_create(instanceCount) :: { Instance }
 				local validCount = 0
 				for index = 1, instanceCount do
 					local instanceItem = instanceList[index]
@@ -145,7 +147,7 @@ local function onClientNetworkEvent(rawBuffer: buffer, instanceList: { Instance 
 	local reader = Buffers_CreateReader(rawBuffer, validInstances)
 	local totalLength = reader.len
 
-	local parseSuccess, parseError = pcall(function()
+	pcall(function()
 		while reader.cursor < totalLength do
 			local channelHash, packetType, argumentCount = Buffers_ReadEventHeader(reader)
 
@@ -345,7 +347,7 @@ function Client:Destroy()
 		end
 	end
 
-	table.clear(self._pendingRequests)
+	table_clear(self._pendingRequests)
 	self._pendingCount = 0
 end
 

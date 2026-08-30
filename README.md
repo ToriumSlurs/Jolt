@@ -19,7 +19,7 @@ Networking library for Roblox that serializes data into binary buffers and batch
 ### Wally
 ```toml
 [dependencies]
-Jolt = "toriumslurs/jolt@4.3.1"
+Jolt = "toriumslurs/jolt@4.4.0"
 ```
 
 ### Manual
@@ -165,4 +165,4 @@ Numbers are automatically compressed to the smallest representation that fits (u
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT - see [LICENSE](LICENSE).

@@ -42,10 +42,6 @@ local task_spawn = task.spawn
 local coroutine_running = coroutine.running
 local coroutine_yield = coroutine.yield
 
-local function dispatch(eventCallback: (...any) -> (), ...: any)
-	task_spawn(eventCallback, ...)
-end
-
 function Connection.Disconnect(self: any)
 	local node: SignalNode = self
 	if not node.Connected then
@@ -76,8 +72,9 @@ function Connection.Disconnect(self: any)
 	node._callback = nil :: any
 	node._signal = nil :: any
 
-	if #nodePool < MAX_NODE_POOL_SIZE then
-		table.insert(nodePool, node)
+	local poolSize = #nodePool
+	if poolSize < MAX_NODE_POOL_SIZE then
+		nodePool[poolSize + 1] = node
 	end
 end
 
@@ -124,14 +121,12 @@ end
 function Signal:Once(callback: (...any) -> ()): Connection
 	local selfSignal = self :: Signal
 	local connection: Connection
-
 	connection = selfSignal:Connect(function(...)
 		if connection.Connected then
 			connection:Disconnect()
 		end
 		callback(...)
 	end)
-
 	return connection
 end
 
@@ -141,7 +136,7 @@ function Signal:Fire(...: any)
 
 	if currentNode ~= nil and currentNode._next == nil then
 		if currentNode.Connected then
-			dispatch(currentNode._callback, ...)
+			task_spawn(currentNode._callback, ...)
 		end
 		return
 	end
@@ -149,7 +144,7 @@ function Signal:Fire(...: any)
 	while currentNode ~= nil do
 		local nextNode = currentNode._next
 		if currentNode.Connected then
-			dispatch(currentNode._callback, ...)
+			task_spawn(currentNode._callback, ...)
 		end
 		currentNode = nextNode
 	end
@@ -182,8 +177,9 @@ function Signal:DisconnectAll()
 		currentNode._callback = nil :: any
 		currentNode._signal = nil :: any
 
-		if #nodePool < MAX_NODE_POOL_SIZE then
-			table.insert(nodePool, currentNode)
+		local poolSize = #nodePool
+		if poolSize < MAX_NODE_POOL_SIZE then
+			nodePool[poolSize + 1] = currentNode
 		end
 
 		currentNode = nextNode

@@ -12,6 +12,9 @@ local MAX_PACKET_ARGUMENTS = Constants.MAX_PACKET_ARGUMENTS
 local Buffers_ReadAny = Buffers.ReadAny
 local Buffers_WriteAny = Buffers.WriteAny
 local Buffers_WriteEventHeader = Buffers.WriteEventHeader
+local table_create = table.create
+local table_unpack = table.unpack
+local select = select
 
 function Packet.ReadArguments(reader: Buffers.Reader, argumentCount: number): ...any
 	if argumentCount <= 0 or reader.cursor >= reader.len then
@@ -59,7 +62,7 @@ function Packet.ReadArguments(reader: Buffers.Reader, argumentCount: number): ..
 	end
 
 	local clampedCount = if argumentCount > MAX_PACKET_ARGUMENTS then MAX_PACKET_ARGUMENTS else argumentCount
-	local argumentList = table.create(clampedCount) :: { any }
+	local argumentList = table_create(clampedCount) :: { any }
 
 	for index = 1, clampedCount do
 		if reader.cursor >= reader.len then
@@ -68,7 +71,7 @@ function Packet.ReadArguments(reader: Buffers.Reader, argumentCount: number): ..
 		argumentList[index] = Buffers_ReadAny(reader)
 	end
 
-	return table.unpack(argumentList, 1, clampedCount)
+	return table_unpack(argumentList, 1, clampedCount)
 end
 
 function Packet.WriteArguments(writer: Buffers.Writer, argumentCount: number, ...: any)
@@ -124,9 +127,8 @@ function Packet.WriteArguments(writer: Buffers.Writer, argumentCount: number, ..
 		Buffers_WriteAny(writer, argumentG, 0)
 		Buffers_WriteAny(writer, argumentH, 0)
 	elseif argumentCount > 8 then
-		local packedArgs = table.pack(...)
 		for index = 1, argumentCount do
-			Buffers_WriteAny(writer, packedArgs[index], 0)
+			Buffers_WriteAny(writer, select(index, ...), 0)
 		end
 	end
 end
@@ -152,8 +154,44 @@ function Packet.WriteEvent(writer: Buffers.Writer, channelHash: number, packetTy
 		Buffers_WriteAny(writer, argumentB, 0)
 		Buffers_WriteAny(writer, argumentC, 0)
 		Buffers_WriteAny(writer, argumentD, 0)
-	elseif argumentCount > 4 then
-		Packet.WriteArguments(writer, argumentCount, ...)
+	elseif argumentCount == 5 then
+		local argumentA, argumentB, argumentC, argumentD, argumentE = ...
+		Buffers_WriteAny(writer, argumentA, 0)
+		Buffers_WriteAny(writer, argumentB, 0)
+		Buffers_WriteAny(writer, argumentC, 0)
+		Buffers_WriteAny(writer, argumentD, 0)
+		Buffers_WriteAny(writer, argumentE, 0)
+	elseif argumentCount == 6 then
+		local argumentA, argumentB, argumentC, argumentD, argumentE, argumentF = ...
+		Buffers_WriteAny(writer, argumentA, 0)
+		Buffers_WriteAny(writer, argumentB, 0)
+		Buffers_WriteAny(writer, argumentC, 0)
+		Buffers_WriteAny(writer, argumentD, 0)
+		Buffers_WriteAny(writer, argumentE, 0)
+		Buffers_WriteAny(writer, argumentF, 0)
+	elseif argumentCount == 7 then
+		local argumentA, argumentB, argumentC, argumentD, argumentE, argumentF, argumentG = ...
+		Buffers_WriteAny(writer, argumentA, 0)
+		Buffers_WriteAny(writer, argumentB, 0)
+		Buffers_WriteAny(writer, argumentC, 0)
+		Buffers_WriteAny(writer, argumentD, 0)
+		Buffers_WriteAny(writer, argumentE, 0)
+		Buffers_WriteAny(writer, argumentF, 0)
+		Buffers_WriteAny(writer, argumentG, 0)
+	elseif argumentCount == 8 then
+		local argumentA, argumentB, argumentC, argumentD, argumentE, argumentF, argumentG, argumentH = ...
+		Buffers_WriteAny(writer, argumentA, 0)
+		Buffers_WriteAny(writer, argumentB, 0)
+		Buffers_WriteAny(writer, argumentC, 0)
+		Buffers_WriteAny(writer, argumentD, 0)
+		Buffers_WriteAny(writer, argumentE, 0)
+		Buffers_WriteAny(writer, argumentF, 0)
+		Buffers_WriteAny(writer, argumentG, 0)
+		Buffers_WriteAny(writer, argumentH, 0)
+	elseif argumentCount > 8 then
+		for index = 1, argumentCount do
+			Buffers_WriteAny(writer, select(index, ...), 0)
+		end
 	end
 end
 

@@ -27,13 +27,18 @@ local coroutine_running = coroutine.running
 local coroutine_yield = coroutine.yield
 local coroutine_status = coroutine.status
 local table_pack = table.pack
+local table_create = table.create
+local table_clear = table.clear
 local math_max = math.max
 
 local Buffers_ReadPacketHeader = Buffers.ReadPacketHeader
+local Buffers_ReadEventHeader = Buffers.ReadEventHeader
 local Buffers_ReadAny = Buffers.ReadAny
 local Buffers_ReadU16 = Buffers.ReadU16
 local Buffers_CreateReader = Buffers.CreateReader
 local Buffers_FreeReader = Buffers.FreeReader
+local Buffers_CreateWriter = Buffers.CreateWriter
+local Buffers_FreeWriter = Buffers.FreeWriter
 local Buffers_WriteU16 = Buffers.WriteU16
 local Buffers_WritePacketHeader = Buffers.WritePacketHeader
 local Buffers_WriteAny = Buffers.WriteAny
@@ -150,7 +155,7 @@ local function onServerNetworkEvent(player: Player, rawBuffer: buffer, instanceL
 			if isClean then
 				validInstances = instanceList
 			else
-				local cleanList = table.create(instanceCount) :: { Instance }
+				local cleanList = table_create(instanceCount) :: { Instance }
 				local validCount = 0
 				for index = 1, instanceCount do
 					local instanceItem = instanceList[index]
@@ -171,7 +176,7 @@ local function onServerNetworkEvent(player: Player, rawBuffer: buffer, instanceL
 
 	pcall(function()
 		while reader.cursor < totalLength do
-			local channelHash, packetType, argumentCount = Buffers.ReadEventHeader(reader)
+			local channelHash, packetType, argumentCount = Buffers_ReadEventHeader(reader)
 
 			if argumentCount > MAX_PACKET_ARGUMENTS or reader.cursor > totalLength then
 				break
@@ -365,7 +370,7 @@ function Server:FireList(players: { Player }, ...: any)
 		return
 	end
 
-	local tempWriter = Buffers.CreateWriter()
+	local tempWriter = Buffers_CreateWriter()
 	Packet_WriteEvent(tempWriter, self._hash, PACKET_EVENT, ...)
 
 	local packetLength = tempWriter.cursor
@@ -399,7 +404,7 @@ function Server:FireList(players: { Player }, ...: any)
 		end
 	end
 
-	Buffers.FreeWriter(tempWriter)
+	Buffers_FreeWriter(tempWriter)
 end
 
 function Server:FireListUnreliable(players: { Player }, ...: any)
@@ -412,7 +417,7 @@ function Server:FireListUnreliable(players: { Player }, ...: any)
 		return
 	end
 
-	local tempWriter = Buffers.CreateWriter()
+	local tempWriter = Buffers_CreateWriter()
 	Packet_WriteEvent(tempWriter, self._hash, PACKET_EVENT, ...)
 
 	local packetLength = tempWriter.cursor
@@ -446,7 +451,7 @@ function Server:FireListUnreliable(players: { Player }, ...: any)
 		end
 	end
 
-	Buffers.FreeWriter(tempWriter)
+	Buffers_FreeWriter(tempWriter)
 end
 
 function Server:FireExcept(exceptPlayer: Player, ...: any)
@@ -523,9 +528,9 @@ function Server:Destroy()
 		end
 	end
 
-	table.clear(self._pendingRequests)
-	table.clear(self._pendingCounts)
-	table.clear(self._requestIdCounters)
+	table_clear(self._pendingRequests)
+	table_clear(self._pendingCounts)
+	table_clear(self._requestIdCounters)
 end
 
 function Server.Initialize()
