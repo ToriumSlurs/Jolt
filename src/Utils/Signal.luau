@@ -36,7 +36,7 @@ local Signal = {}
 Signal.__index = Signal
 
 local nodePool: { SignalNode } = {}
-local MAX_NODE_POOL_SIZE = 512
+const MAX_NODE_POOL_SIZE = 512
 
 local task_spawn = task.spawn
 local coroutine_running = coroutine.running

@@ -9,16 +9,16 @@ local Remotes = require(script.Parent.Utils.Remotes)
 local Signal = require(script.Parent.Utils.Signal)
 local Bridge = require(script.Parent.Bridge)
 local Hash = require(script.Parent.Utils.Hash)
-local Constants = require(script.Parent.Utils.Constants)
-local Packet = require(script.Parent.Utils.Packet)
+const Constants = require(script.Parent.Utils.Constants)
+const Packet = require(script.Parent.Utils.Packet)
 
-local PACKET_EVENT = Constants.PACKET_EVENT
-local PACKET_REQUEST = Constants.PACKET_REQUEST
-local PACKET_RESPONSE = Constants.PACKET_RESPONSE
-local REQUEST_TIMEOUT_SECONDS = Constants.REQUEST_TIMEOUT_SECONDS
-local MAX_PACKET_ARGUMENTS = Constants.MAX_PACKET_ARGUMENTS
-local MAX_PENDING_REQUESTS = Constants.MAX_PENDING_REQUESTS
-local MAX_RAW_BUFFER_SIZE = Constants.MAX_RAW_BUFFER_SIZE
+const PACKET_EVENT = Constants.PACKET_EVENT
+const PACKET_REQUEST = Constants.PACKET_REQUEST
+const PACKET_RESPONSE = Constants.PACKET_RESPONSE
+const REQUEST_TIMEOUT_SECONDS = Constants.REQUEST_TIMEOUT_SECONDS
+const MAX_PACKET_ARGUMENTS = Constants.MAX_PACKET_ARGUMENTS
+const MAX_PENDING_REQUESTS = Constants.MAX_PENDING_REQUESTS
+const MAX_RAW_BUFFER_SIZE = Constants.MAX_RAW_BUFFER_SIZE
 
 local task_spawn = task.spawn
 local task_delay = task.delay

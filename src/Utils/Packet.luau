@@ -7,7 +7,7 @@ local Constants = require(script.Parent.Constants)
 
 local Packet = {}
 
-local MAX_PACKET_ARGUMENTS = Constants.MAX_PACKET_ARGUMENTS
+const MAX_PACKET_ARGUMENTS = Constants.MAX_PACKET_ARGUMENTS
 
 local Buffers_ReadAny = Buffers.ReadAny
 local Buffers_WriteAny = Buffers.WriteAny

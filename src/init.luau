@@ -1,14 +1,14 @@
 --!strict
 
-local RunService = game:GetService("RunService")
+const RunService = game:GetService("RunService")
 
-local IS_SERVER = RunService:IsServer()
-local IS_CLIENT = RunService:IsClient()
+const IS_SERVER = RunService:IsServer()
+const IS_CLIENT = RunService:IsClient()
 
-local Client = if IS_CLIENT then require(script.Client) else nil :: any
-local Server = if IS_SERVER then require(script.Server) else nil :: any
-local Signal = require(script.Utils.Signal)
-local Constants = require(script.Utils.Constants)
+const Client = if IS_CLIENT then require(script.Client) else nil :: any
+const Server = if IS_SERVER then require(script.Server) else nil :: any
+const Signal = require(script.Utils.Signal)
+const Constants = require(script.Utils.Constants)
 
 export type Connection = Signal.Connection
 
@@ -44,9 +44,11 @@ if IS_SERVER then
 	require(script.Utils.Remotes).Create()
 end
 
-local Jolt = {
-	Version = Constants.VERSION,
-}
+if not Constants.SILENT_START and not Constants.silentstart then
+	print("[Jolt v" .. Constants.VERSION .. "] Starting on " .. (if IS_SERVER then "server" else "client") .. "... Made by ToriumSlurs")
+end
+
+local Jolt = {}
 
 function Jolt.Server<Args..., Out...>(channelName: string): Server<Args..., Out...>
 	if not IS_SERVER then

@@ -2,10 +2,10 @@
 --!native
 --!optimize 2
 
-local RunService = game:GetService("RunService")
-local Players = game:GetService("Players")
+const RunService = game:GetService("RunService")
+const Players = game:GetService("Players")
 
-local IS_SERVER = RunService:IsServer()
+const IS_SERVER = RunService:IsServer()
 
 local Buffers = require(script.Parent.Utils.Buffers)
 local Remotes = require(script.Parent.Utils.Remotes)

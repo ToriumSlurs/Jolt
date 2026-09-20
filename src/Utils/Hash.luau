@@ -6,8 +6,8 @@ local Hash = {}
 
 local nameHashCache: { [string]: number } = {}
 
-local FNV_PRIME = 0x01000193
-local FNV_OFFSET_BASIS = 0x811C9DC5
+const FNV_PRIME = 0x01000193
+const FNV_OFFSET_BASIS = 0x811C9DC5
 
 local string_byte = string.byte
 local bit_bxor = bit32.bxor

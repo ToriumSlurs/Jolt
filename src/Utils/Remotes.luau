@@ -2,13 +2,13 @@
 --!native
 --!optimize 2
 
-local RunService = game:GetService("RunService")
-local IS_SERVER = RunService:IsServer()
+const RunService = game:GetService("RunService")
+const IS_SERVER = RunService:IsServer()
 
 local Remotes = {}
 
-local RELIABLE_REMOTE_NAME = "Jolt_Reliable"
-local UNRELIABLE_REMOTE_NAME = "Jolt_Unreliable"
+const RELIABLE_REMOTE_NAME = "Jolt_Reliable"
+const UNRELIABLE_REMOTE_NAME = "Jolt_Unreliable"
 
 export type RemoteGroup = {
 	Reliable: RemoteEvent,
