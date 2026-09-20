@@ -2,7 +2,7 @@
 --!native
 --!optimize 2
 
-local Buffers = {}
+const Buffers = {}
 
 export type Writer = {
 	buff: buffer,
@@ -20,37 +20,37 @@ export type Reader = {
 	_inPool: boolean?,
 }
 
-local buffer_create = buffer.create
-local buffer_len = buffer.len
-local buffer_copy = buffer.copy
-local buffer_readu8 = buffer.readu8
-local buffer_writeu8 = buffer.writeu8
-local buffer_readi8 = buffer.readi8
-local buffer_writei8 = buffer.writei8
-local buffer_readu16 = buffer.readu16
-local buffer_writeu16 = buffer.writeu16
-local buffer_readi16 = buffer.readi16
-local buffer_writei16 = buffer.writei16
-local buffer_readu32 = buffer.readu32
-local buffer_writeu32 = buffer.writeu32
-local buffer_readi32 = buffer.readi32
-local buffer_writei32 = buffer.writei32
-local buffer_readf32 = buffer.readf32
-local buffer_writef32 = buffer.writef32
-local buffer_readf64 = buffer.readf64
-local buffer_writef64 = buffer.writef64
-local buffer_readstring = buffer.readstring
-local buffer_writestring = buffer.writestring
+const buffer_create = buffer.create
+const buffer_len = buffer.len
+const buffer_copy = buffer.copy
+const buffer_readu8 = buffer.readu8
+const buffer_writeu8 = buffer.writeu8
+const buffer_readi8 = buffer.readi8
+const buffer_writei8 = buffer.writei8
+const buffer_readu16 = buffer.readu16
+const buffer_writeu16 = buffer.writeu16
+const buffer_readi16 = buffer.readi16
+const buffer_writei16 = buffer.writei16
+const buffer_readu32 = buffer.readu32
+const buffer_writeu32 = buffer.writeu32
+const buffer_readi32 = buffer.readi32
+const buffer_writei32 = buffer.writei32
+const buffer_readf32 = buffer.readf32
+const buffer_writef32 = buffer.writef32
+const buffer_readf64 = buffer.readf64
+const buffer_writef64 = buffer.writef64
+const buffer_readstring = buffer.readstring
+const buffer_writestring = buffer.writestring
 
-local table_create = table.create
-local table_clear = table.clear
-local table_insert = table.insert
-local table_clone = table.clone
-local math_max = math.max
-local bit_lshift = bit32.lshift
-local bit_rshift = bit32.rshift
-local bit_band = bit32.band
-local bit_bor = bit32.bor
+const table_create = table.create
+const table_clear = table.clear
+const table_insert = table.insert
+const table_clone = table.clone
+const math_max = math.max
+const bit_lshift = bit32.lshift
+const bit_rshift = bit32.rshift
+const bit_band = bit32.band
+const bit_bor = bit32.bor
 
 const TAG_NIL = 1
 const TAG_BOOL_F = 2
@@ -122,9 +122,9 @@ const MAX_SERIALIZATION_DEPTH = 32
 local writerMemoryPool: { Writer } = {}
 local readerMemoryPool: { Reader } = {}
 
-local scratchFloatConversionBuffer = buffer_create(4)
+const scratchFloatConversionBuffer = buffer_create(4)
 
-local enumCache: { [string]: { [number]: EnumItem } } = {}
+const enumCache: { [string]: { [number]: EnumItem } } = {}
 
 local function getCachedEnumItem(enumName: string, enumValue: number): EnumItem?
 	local enumCategory = enumCache[enumName]

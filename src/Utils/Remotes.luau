@@ -5,7 +5,7 @@
 const RunService = game:GetService("RunService")
 const IS_SERVER = RunService:IsServer()
 
-local Remotes = {}
+const Remotes = {}
 
 const RELIABLE_REMOTE_NAME = "Jolt_Reliable"
 const UNRELIABLE_REMOTE_NAME = "Jolt_Unreliable"
@@ -26,7 +26,7 @@ function Remotes.Get(): RemoteGroup
 	local unreliableEvent = script:FindFirstChild(UNRELIABLE_REMOTE_NAME) :: UnreliableRemoteEvent?
 
 	if reliableEvent and unreliableEvent then
-		local group: RemoteGroup = {
+		const group: RemoteGroup = {
 			Reliable = reliableEvent,
 			Unreliable = unreliableEvent,
 		}
@@ -34,7 +34,7 @@ function Remotes.Get(): RemoteGroup
 		return group
 	end
 
-	local startTime = os.clock()
+	const startTime = os.clock()
 	local warned = false
 
 	while not reliableEvent or not unreliableEvent do
@@ -64,7 +64,7 @@ function Remotes.Get(): RemoteGroup
 		end
 	end
 
-	local group: RemoteGroup = {
+	const group: RemoteGroup = {
 		Reliable = reliableEvent :: RemoteEvent,
 		Unreliable = unreliableEvent :: UnreliableRemoteEvent,
 	}
@@ -93,7 +93,7 @@ function Remotes.Create(): RemoteGroup
 		unreliableEvent.Parent = script
 	end
 
-	local group: RemoteGroup = {
+	const group: RemoteGroup = {
 		Reliable = reliableEvent,
 		Unreliable = unreliableEvent,
 	}

@@ -7,14 +7,14 @@ const Players = game:GetService("Players")
 
 const IS_SERVER = RunService:IsServer()
 
-local Buffers = require(script.Parent.Utils.Buffers)
-local Remotes = require(script.Parent.Utils.Remotes)
+const Buffers = require(script.Parent.Utils.Buffers)
+const Remotes = require(script.Parent.Utils.Remotes)
 
-local Buffers_CreateWriter = Buffers.CreateWriter
-local Buffers_FreeWriter = Buffers.FreeWriter
-local Buffers_Finalize = Buffers.Finalize
+const Buffers_CreateWriter = Buffers.CreateWriter
+const Buffers_FreeWriter = Buffers.FreeWriter
+const Buffers_Finalize = Buffers.Finalize
 
-local Bridge = {}
+const Bridge = {}
 
 local reliablePlayerWriters: { [Player]: Buffers.Writer } = {}
 local unreliablePlayerWriters: { [Player]: Buffers.Writer } = {}
@@ -38,7 +38,7 @@ function Bridge.Initialize()
 	end
 	isInitializing = true
 
-	local success, result = pcall(function()
+	const success, result = pcall(function()
 		return if IS_SERVER then Remotes.Create() else Remotes.Get()
 	end)
 
@@ -52,7 +52,7 @@ function Bridge.Initialize()
 		return
 	end
 
-	local remoteGroup = result :: Remotes.RemoteGroup
+	const remoteGroup = result :: Remotes.RemoteGroup
 	reliableRemote = remoteGroup.Reliable
 	unreliableRemote = remoteGroup.Unreliable
 	frameConnection = RunService.Heartbeat:Connect(Bridge.FlushAll)
@@ -65,21 +65,21 @@ function Bridge.Initialize()
 end
 
 function Bridge.FlushPlayer(player: Player)
-	local relWriter = reliablePlayerWriters[player]
+	const relWriter = reliablePlayerWriters[player]
 	if relWriter ~= nil then
 		reliablePlayerWriters[player] = nil
 		if relWriter.cursor > 0 and reliableRemote and player.Parent ~= nil and player:IsDescendantOf(Players) then
-			local packetBuffer, instances = Buffers_Finalize(relWriter)
+			const packetBuffer, instances = Buffers_Finalize(relWriter)
 			pcall(reliableRemote.FireClient, reliableRemote, player, packetBuffer, instances)
 		end
 		Buffers_FreeWriter(relWriter)
 	end
 
-	local unrelWriter = unreliablePlayerWriters[player]
+	const unrelWriter = unreliablePlayerWriters[player]
 	if unrelWriter ~= nil then
 		unreliablePlayerWriters[player] = nil
 		if unrelWriter.cursor > 0 and unreliableRemote and player.Parent ~= nil and player:IsDescendantOf(Players) then
-			local packetBuffer, instances = Buffers_Finalize(unrelWriter)
+			const packetBuffer, instances = Buffers_Finalize(unrelWriter)
 			pcall(unreliableRemote.FireClient, unreliableRemote, player, packetBuffer, instances)
 		end
 		Buffers_FreeWriter(unrelWriter)
@@ -94,62 +94,62 @@ function Bridge.FlushAll()
 
 	if IS_SERVER then
 		if broadcastReliableWriter ~= nil then
-			local writer = broadcastReliableWriter
+			const writer = broadcastReliableWriter
 			broadcastReliableWriter = nil
 			if writer.cursor > 0 then
-				local packetBuffer, instances = Buffers_Finalize(writer)
+				const packetBuffer, instances = Buffers_Finalize(writer)
 				reliableRemote:FireAllClients(packetBuffer, instances)
 			end
 			Buffers_FreeWriter(writer)
 		end
 
 		if broadcastUnreliableWriter ~= nil then
-			local writer = broadcastUnreliableWriter
+			const writer = broadcastUnreliableWriter
 			broadcastUnreliableWriter = nil
 			if writer.cursor > 0 then
-				local packetBuffer, instances = Buffers_Finalize(writer)
+				const packetBuffer, instances = Buffers_Finalize(writer)
 				unreliableRemote:FireAllClients(packetBuffer, instances)
 			end
 			Buffers_FreeWriter(writer)
 		end
 
-		local currentReliable = reliablePlayerWriters
+		const currentReliable = reliablePlayerWriters
 		reliablePlayerWriters = {}
 
 		for targetPlayer, writer in currentReliable do
 			if writer.cursor > 0 and targetPlayer.Parent ~= nil and targetPlayer:IsDescendantOf(Players) then
-				local packetBuffer, instances = Buffers_Finalize(writer)
+				const packetBuffer, instances = Buffers_Finalize(writer)
 				pcall(reliableRemote.FireClient, reliableRemote, targetPlayer, packetBuffer, instances)
 			end
 			Buffers_FreeWriter(writer)
 		end
 
-		local currentUnreliable = unreliablePlayerWriters
+		const currentUnreliable = unreliablePlayerWriters
 		unreliablePlayerWriters = {}
 
 		for targetPlayer, writer in currentUnreliable do
 			if writer.cursor > 0 and targetPlayer.Parent ~= nil and targetPlayer:IsDescendantOf(Players) then
-				local packetBuffer, instances = Buffers_Finalize(writer)
+				const packetBuffer, instances = Buffers_Finalize(writer)
 				pcall(unreliableRemote.FireClient, unreliableRemote, targetPlayer, packetBuffer, instances)
 			end
 			Buffers_FreeWriter(writer)
 		end
 	else
 		if clientReliableWriter ~= nil then
-			local writer = clientReliableWriter
+			const writer = clientReliableWriter
 			clientReliableWriter = nil
 			if writer.cursor > 0 then
-				local packetBuffer, instances = Buffers_Finalize(writer)
+				const packetBuffer, instances = Buffers_Finalize(writer)
 				reliableRemote:FireServer(packetBuffer, instances)
 			end
 			Buffers_FreeWriter(writer)
 		end
 
 		if clientUnreliableWriter ~= nil then
-			local writer = clientUnreliableWriter
+			const writer = clientUnreliableWriter
 			clientUnreliableWriter = nil
 			if writer.cursor > 0 then
-				local packetBuffer, instances = Buffers_Finalize(writer)
+				const packetBuffer, instances = Buffers_Finalize(writer)
 				unreliableRemote:FireServer(packetBuffer, instances)
 			end
 			Buffers_FreeWriter(writer)

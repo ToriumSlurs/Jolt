@@ -45,10 +45,10 @@ if IS_SERVER then
 end
 
 if not Constants.SILENT_START and not Constants.silentstart then
-	print("⚡ [Jolt v" .. Constants.VERSION .. "] Initialized on " .. (if IS_SERVER then "Server" else "Client") .. " • Made by ToriumSlurs")
+	print("[Jolt v" .. Constants.VERSION .. "] Initialized on " .. (if IS_SERVER then "Server" else "Client") .. " | Made by ToriumSlurs")
 end
 
-local Jolt = {}
+const Jolt = {}
 
 function Jolt.Server<Args..., Out...>(channelName: string): Server<Args..., Out...>
 	if not IS_SERVER then

@@ -2,13 +2,13 @@
 --!native
 --!optimize 2
 
-local Players = game:GetService("Players")
+const Players = game:GetService("Players")
 
-local Buffers = require(script.Parent.Utils.Buffers)
-local Remotes = require(script.Parent.Utils.Remotes)
-local Signal = require(script.Parent.Utils.Signal)
-local Bridge = require(script.Parent.Bridge)
-local Hash = require(script.Parent.Utils.Hash)
+const Buffers = require(script.Parent.Utils.Buffers)
+const Remotes = require(script.Parent.Utils.Remotes)
+const Signal = require(script.Parent.Utils.Signal)
+const Bridge = require(script.Parent.Bridge)
+const Hash = require(script.Parent.Utils.Hash)
 const Constants = require(script.Parent.Utils.Constants)
 const Packet = require(script.Parent.Utils.Packet)
 
@@ -20,32 +20,32 @@ const MAX_PACKET_ARGUMENTS = Constants.MAX_PACKET_ARGUMENTS
 const MAX_PENDING_REQUESTS = Constants.MAX_PENDING_REQUESTS
 const MAX_RAW_BUFFER_SIZE = Constants.MAX_RAW_BUFFER_SIZE
 
-local task_spawn = task.spawn
-local task_delay = task.delay
-local task_cancel = task.cancel
-local coroutine_running = coroutine.running
-local coroutine_yield = coroutine.yield
-local coroutine_status = coroutine.status
-local table_pack = table.pack
-local table_create = table.create
-local table_clear = table.clear
-local math_max = math.max
+const task_spawn = task.spawn
+const task_delay = task.delay
+const task_cancel = task.cancel
+const coroutine_running = coroutine.running
+const coroutine_yield = coroutine.yield
+const coroutine_status = coroutine.status
+const table_pack = table.pack
+const table_create = table.create
+const table_clear = table.clear
+const math_max = math.max
 
-local Buffers_ReadPacketHeader = Buffers.ReadPacketHeader
-local Buffers_ReadEventHeader = Buffers.ReadEventHeader
-local Buffers_ReadAny = Buffers.ReadAny
-local Buffers_ReadU16 = Buffers.ReadU16
-local Buffers_CreateReader = Buffers.CreateReader
-local Buffers_FreeReader = Buffers.FreeReader
-local Buffers_CreateWriter = Buffers.CreateWriter
-local Buffers_FreeWriter = Buffers.FreeWriter
-local Buffers_WriteU16 = Buffers.WriteU16
-local Buffers_WritePacketHeader = Buffers.WritePacketHeader
-local Buffers_WriteAny = Buffers.WriteAny
-local Bridge_Writer = Bridge.Writer
-local Hash_HashName = Hash.HashName
-local Packet_ReadArguments = Packet.ReadArguments
-local Packet_WriteEvent = Packet.WriteEvent
+const Buffers_ReadPacketHeader = Buffers.ReadPacketHeader
+const Buffers_ReadEventHeader = Buffers.ReadEventHeader
+const Buffers_ReadAny = Buffers.ReadAny
+const Buffers_ReadU16 = Buffers.ReadU16
+const Buffers_CreateReader = Buffers.CreateReader
+const Buffers_FreeReader = Buffers.FreeReader
+const Buffers_CreateWriter = Buffers.CreateWriter
+const Buffers_FreeWriter = Buffers.FreeWriter
+const Buffers_WriteU16 = Buffers.WriteU16
+const Buffers_WritePacketHeader = Buffers.WritePacketHeader
+const Buffers_WriteAny = Buffers.WriteAny
+const Bridge_Writer = Bridge.Writer
+const Hash_HashName = Hash.HashName
+const Packet_ReadArguments = Packet.ReadArguments
+const Packet_WriteEvent = Packet.WriteEvent
 
 local function processInvokeReturn(isSuccess: boolean, ...: any): ...any
 	if not isSuccess then
@@ -83,14 +83,14 @@ export type Server<Args... = (...any), Out... = (...any)> = {
 	Destroy: (self: Server<Args..., Out...>) -> (),
 }
 
-local Server = {}
+const Server = {}
 Server.__index = Server
 
 local reliableConnection: RBXScriptConnection?
 local unreliableConnection: RBXScriptConnection?
 local playerRemovingConnection: RBXScriptConnection?
-local activeChannels: { [number]: Server<any, any> } = {}
-local incomingRequestCounts: { [Player]: number } = {}
+const activeChannels: { [number]: Server<any, any> } = {}
+const incomingRequestCounts: { [Player]: number } = {}
 
 local reliableRemote: RemoteEvent
 local unreliableRemote: UnreliableRemoteEvent

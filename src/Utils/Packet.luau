@@ -2,19 +2,19 @@
 --!native
 --!optimize 2
 
-local Buffers = require(script.Parent.Buffers)
-local Constants = require(script.Parent.Constants)
+const Buffers = require(script.Parent.Buffers)
+const Constants = require(script.Parent.Constants)
 
-local Packet = {}
+const Packet = {}
 
 const MAX_PACKET_ARGUMENTS = Constants.MAX_PACKET_ARGUMENTS
 
-local Buffers_ReadAny = Buffers.ReadAny
-local Buffers_WriteAny = Buffers.WriteAny
-local Buffers_WriteEventHeader = Buffers.WriteEventHeader
-local table_create = table.create
-local table_unpack = table.unpack
-local select = select
+const Buffers_ReadAny = Buffers.ReadAny
+const Buffers_WriteAny = Buffers.WriteAny
+const Buffers_WriteEventHeader = Buffers.WriteEventHeader
+const table_create = table.create
+const table_unpack = table.unpack
+const select = select
 
 function Packet.ReadArguments(reader: Buffers.Reader, argumentCount: number): ...any
 	if argumentCount <= 0 or reader.cursor >= reader.len then

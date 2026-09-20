@@ -7,7 +7,7 @@ export type Connection = {
 	Connected: boolean,
 }
 
-local Connection = {}
+const Connection = {}
 Connection.__index = Connection
 
 type SignalNode = typeof(setmetatable(
@@ -32,24 +32,24 @@ export type Signal = {
 	_tail: SignalNode?,
 }
 
-local Signal = {}
+const Signal = {}
 Signal.__index = Signal
 
 local nodePool: { SignalNode } = {}
 const MAX_NODE_POOL_SIZE = 512
 
-local task_spawn = task.spawn
-local coroutine_running = coroutine.running
-local coroutine_yield = coroutine.yield
+const task_spawn = task.spawn
+const coroutine_running = coroutine.running
+const coroutine_yield = coroutine.yield
 
 function Connection.Disconnect(self: any)
-	local node: SignalNode = self
+	const node: SignalNode = self
 	if not node.Connected then
 		return
 	end
 	node.Connected = false
 
-	local parentSignal = node._signal
+	const parentSignal = node._signal
 	if parentSignal ~= nil then
 		if parentSignal._head == node then
 			parentSignal._head = node._next
@@ -72,7 +72,7 @@ function Connection.Disconnect(self: any)
 	node._callback = nil :: any
 	node._signal = nil :: any
 
-	local poolSize = #nodePool
+	const poolSize = #nodePool
 	if poolSize < MAX_NODE_POOL_SIZE then
 		nodePool[poolSize + 1] = node
 	end
@@ -86,8 +86,8 @@ function Signal.new(): Signal
 end
 
 function Signal:Connect(callback: (...any) -> ()): Connection
-	local selfSignal = self :: Signal
-	local poolSize = #nodePool
+	const selfSignal = self :: Signal
+	const poolSize = #nodePool
 	local newNode: SignalNode
 
 	if poolSize > 0 then
@@ -119,7 +119,7 @@ function Signal:Connect(callback: (...any) -> ()): Connection
 end
 
 function Signal:Once(callback: (...any) -> ()): Connection
-	local selfSignal = self :: Signal
+	const selfSignal = self :: Signal
 	local connection: Connection
 	connection = selfSignal:Connect(function(...)
 		if connection.Connected then
@@ -131,7 +131,7 @@ function Signal:Once(callback: (...any) -> ()): Connection
 end
 
 function Signal:Fire(...: any)
-	local selfSignal = self :: Signal
+	const selfSignal = self :: Signal
 	local currentNode = selfSignal._head
 
 	if currentNode ~= nil and currentNode._next == nil then
@@ -151,8 +151,8 @@ function Signal:Fire(...: any)
 end
 
 function Signal:Wait(): ...any
-	local selfSignal = self :: Signal
-	local callingThread = coroutine_running()
+	const selfSignal = self :: Signal
+	const callingThread = coroutine_running()
 	local connection: Connection
 
 	connection = selfSignal:Connect(function(...)
@@ -166,7 +166,7 @@ function Signal:Wait(): ...any
 end
 
 function Signal:DisconnectAll()
-	local selfSignal = self :: Signal
+	const selfSignal = self :: Signal
 	local currentNode = selfSignal._head
 
 	while currentNode ~= nil do
@@ -177,7 +177,7 @@ function Signal:DisconnectAll()
 		currentNode._callback = nil :: any
 		currentNode._signal = nil :: any
 
-		local poolSize = #nodePool
+		const poolSize = #nodePool
 		if poolSize < MAX_NODE_POOL_SIZE then
 			nodePool[poolSize + 1] = currentNode
 		end
