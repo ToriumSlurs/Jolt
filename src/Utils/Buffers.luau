@@ -1774,7 +1774,15 @@ local function readTableValue(reader: Reader, tagByte: number, currentDepth: num
 		local isAllFixed = true
 
 		for kIdx = 1, keyCount do
+			if cursor + 2 > reader.len then
+				reader.cursor = reader.len
+				return {}
+			end
 			local kLen = buffer_readu8(sourceBuffer, cursor)
+			if cursor + 2 + kLen > reader.len then
+				reader.cursor = reader.len
+				return {}
+			end
 			keys[kIdx] = buffer_readstring(sourceBuffer, cursor + 1, kLen)
 			local cType = buffer_readu8(sourceBuffer, cursor + 1 + kLen)
 			colTypes[kIdx] = cType
@@ -1802,7 +1810,7 @@ local function readTableValue(reader: Reader, tagByte: number, currentDepth: num
 		local arrayResult = table_create(elementCount) :: { { [string]: any } }
 		if isAllFixed then
 			for i = 1, elementCount do
-				if cursor >= reader.len then
+				if cursor + fixedRowStride > reader.len then
 					break
 				end
 				local row: { [string]: any } = {}
@@ -1865,40 +1873,55 @@ local function readTableValue(reader: Reader, tagByte: number, currentDepth: num
 					break
 				end
 				local row: { [string]: any } = {}
+				local rowTruncated = false
 				for kIdx = 1, keyCount do
 					local cType = colTypes[kIdx]
 					if cType == COL_U8 then
+						if cursor + 1 > reader.len then rowTruncated = true; break end
 						row[keys[kIdx]] = buffer_readu8(sourceBuffer, cursor)
 						cursor += 1
 					elseif cType == COL_I8 then
+						if cursor + 1 > reader.len then rowTruncated = true; break end
 						row[keys[kIdx]] = buffer_readi8(sourceBuffer, cursor)
 						cursor += 1
 					elseif cType == COL_U16 then
+						if cursor + 2 > reader.len then rowTruncated = true; break end
 						row[keys[kIdx]] = buffer_readu16(sourceBuffer, cursor)
 						cursor += 2
 					elseif cType == COL_I16 then
+						if cursor + 2 > reader.len then rowTruncated = true; break end
 						row[keys[kIdx]] = buffer_readi16(sourceBuffer, cursor)
 						cursor += 2
 					elseif cType == COL_U32 then
+						if cursor + 4 > reader.len then rowTruncated = true; break end
 						row[keys[kIdx]] = buffer_readu32(sourceBuffer, cursor)
 						cursor += 4
 					elseif cType == COL_I32 then
+						if cursor + 4 > reader.len then rowTruncated = true; break end
 						row[keys[kIdx]] = buffer_readi32(sourceBuffer, cursor)
 						cursor += 4
 					elseif cType == COL_F32 then
+						if cursor + 4 > reader.len then rowTruncated = true; break end
 						row[keys[kIdx]] = buffer_readf32(sourceBuffer, cursor)
 						cursor += 4
 					elseif cType == COL_F64 then
+						if cursor + 8 > reader.len then rowTruncated = true; break end
 						row[keys[kIdx]] = buffer_readf64(sourceBuffer, cursor)
 						cursor += 8
 					elseif cType == COL_BOOL then
+						if cursor + 1 > reader.len then rowTruncated = true; break end
 						row[keys[kIdx]] = buffer_readu8(sourceBuffer, cursor) == 1
 						cursor += 1
 					elseif cType == COL_STR then
+						if cursor + 1 > reader.len then rowTruncated = true; break end
 						local sLen = buffer_readu8(sourceBuffer, cursor)
+						if cursor + 1 + sLen > reader.len then
+							sLen = math_max(0, reader.len - (cursor + 1))
+						end
 						row[keys[kIdx]] = if sLen > 0 then buffer_readstring(sourceBuffer, cursor + 1, sLen) else ""
 						cursor += 1 + sLen
 					elseif cType == COL_VEC3 then
+						if cursor + 12 > reader.len then rowTruncated = true; break end
 						row[keys[kIdx]] = Vector3.new(
 							buffer_readf32(sourceBuffer, cursor),
 							buffer_readf32(sourceBuffer, cursor + 4),
@@ -1906,6 +1929,7 @@ local function readTableValue(reader: Reader, tagByte: number, currentDepth: num
 						)
 						cursor += 12
 					elseif cType == COL_COLOR3 then
+						if cursor + 3 > reader.len then rowTruncated = true; break end
 						row[keys[kIdx]] = Color3.fromRGB(
 							buffer_readu8(sourceBuffer, cursor),
 							buffer_readu8(sourceBuffer, cursor + 1),
@@ -1913,6 +1937,7 @@ local function readTableValue(reader: Reader, tagByte: number, currentDepth: num
 						)
 						cursor += 3
 					elseif cType == COL_CFRAME then
+						if cursor + 48 > reader.len then rowTruncated = true; break end
 						row[keys[kIdx]] = CFrame.new(
 							buffer_readf32(sourceBuffer, cursor),
 							buffer_readf32(sourceBuffer, cursor + 4),
@@ -1934,6 +1959,9 @@ local function readTableValue(reader: Reader, tagByte: number, currentDepth: num
 						cursor = reader.cursor
 					end
 				end
+				if rowTruncated then
+					break
+				end
 				arrayResult[i] = row
 			end
 		end
@@ -1942,42 +1970,54 @@ local function readTableValue(reader: Reader, tagByte: number, currentDepth: num
 	elseif tagByte == TAG_MAP_STR_FAST then
 		local cursor = reader.cursor
 		if cursor + 4 > reader.len then
+			reader.cursor = reader.len
 			return {}
 		end
 		local entryCount = buffer_readu32(sourceBuffer, cursor)
 		cursor += 4
 		local mapResult: { [string]: any } = {}
 		for _ = 1, entryCount do
-			if cursor >= reader.len then
+			if cursor + 2 > reader.len then
 				break
 			end
 			local kLen = buffer_readu8(sourceBuffer, cursor)
+			if cursor + 2 + kLen > reader.len then
+				break
+			end
 			local k = buffer_readstring(sourceBuffer, cursor + 1, kLen)
 			cursor += 1 + kLen
 			local vTag = buffer_readu8(sourceBuffer, cursor)
 			cursor += 1
 			if vTag == TAG_U8 then
+				if cursor + 1 > reader.len then break end
 				mapResult[k] = buffer_readu8(sourceBuffer, cursor)
 				cursor += 1
 			elseif vTag == TAG_I8 then
+				if cursor + 1 > reader.len then break end
 				mapResult[k] = buffer_readi8(sourceBuffer, cursor)
 				cursor += 1
 			elseif vTag == TAG_U16 then
+				if cursor + 2 > reader.len then break end
 				mapResult[k] = buffer_readu16(sourceBuffer, cursor)
 				cursor += 2
 			elseif vTag == TAG_I16 then
+				if cursor + 2 > reader.len then break end
 				mapResult[k] = buffer_readi16(sourceBuffer, cursor)
 				cursor += 2
 			elseif vTag == TAG_U32 then
+				if cursor + 4 > reader.len then break end
 				mapResult[k] = buffer_readu32(sourceBuffer, cursor)
 				cursor += 4
 			elseif vTag == TAG_I32 then
+				if cursor + 4 > reader.len then break end
 				mapResult[k] = buffer_readi32(sourceBuffer, cursor)
 				cursor += 4
 			elseif vTag == TAG_F32 then
+				if cursor + 4 > reader.len then break end
 				mapResult[k] = buffer_readf32(sourceBuffer, cursor)
 				cursor += 4
 			elseif vTag == TAG_F64 then
+				if cursor + 8 > reader.len then break end
 				mapResult[k] = buffer_readf64(sourceBuffer, cursor)
 				cursor += 8
 			elseif vTag == TAG_BOOL_T then
@@ -1985,10 +2025,15 @@ local function readTableValue(reader: Reader, tagByte: number, currentDepth: num
 			elseif vTag == TAG_BOOL_F then
 				mapResult[k] = false
 			elseif vTag == TAG_STR_U8 then
+				if cursor + 1 > reader.len then break end
 				local sLen = buffer_readu8(sourceBuffer, cursor)
+				if cursor + 1 + sLen > reader.len then
+					sLen = math_max(0, reader.len - (cursor + 1))
+				end
 				mapResult[k] = if sLen > 0 then buffer_readstring(sourceBuffer, cursor + 1, sLen) else ""
 				cursor += 1 + sLen
 			elseif vTag == TAG_VEC3 then
+				if cursor + 12 > reader.len then break end
 				mapResult[k] = Vector3.new(
 					buffer_readf32(sourceBuffer, cursor),
 					buffer_readf32(sourceBuffer, cursor + 4),
@@ -2061,70 +2106,153 @@ readAnyValue = function(reader: Reader, currentDepth: number): any
 	elseif tagByte == TAG_BOOL_T then
 		return true
 	elseif tagByte == TAG_U8 then
+		if cursor + 2 > reader.len then
+			reader.cursor = reader.len
+			return 0
+		end
 		local val = buffer_readu8(sourceBuffer, cursor + 1)
 		reader.cursor = cursor + 2
 		return val
 	elseif tagByte == TAG_I8 then
+		if cursor + 2 > reader.len then
+			reader.cursor = reader.len
+			return 0
+		end
 		local val = buffer_readi8(sourceBuffer, cursor + 1)
 		reader.cursor = cursor + 2
 		return val
 	elseif tagByte == TAG_U16 then
+		if cursor + 3 > reader.len then
+			reader.cursor = reader.len
+			return 0
+		end
 		local val = buffer_readu16(sourceBuffer, cursor + 1)
 		reader.cursor = cursor + 3
 		return val
 	elseif tagByte == TAG_I16 then
+		if cursor + 3 > reader.len then
+			reader.cursor = reader.len
+			return 0
+		end
 		local val = buffer_readi16(sourceBuffer, cursor + 1)
 		reader.cursor = cursor + 3
 		return val
 	elseif tagByte == TAG_U32 then
+		if cursor + 5 > reader.len then
+			reader.cursor = reader.len
+			return 0
+		end
 		local val = buffer_readu32(sourceBuffer, cursor + 1)
 		reader.cursor = cursor + 5
 		return val
 	elseif tagByte == TAG_I32 then
+		if cursor + 5 > reader.len then
+			reader.cursor = reader.len
+			return 0
+		end
 		local val = buffer_readi32(sourceBuffer, cursor + 1)
 		reader.cursor = cursor + 5
 		return val
 	elseif tagByte == TAG_F32 then
+		if cursor + 5 > reader.len then
+			reader.cursor = reader.len
+			return 0
+		end
 		local val = buffer_readf32(sourceBuffer, cursor + 1)
 		reader.cursor = cursor + 5
 		return val
 	elseif tagByte == TAG_F64 then
+		if cursor + 9 > reader.len then
+			reader.cursor = reader.len
+			return 0
+		end
 		local val = buffer_readf64(sourceBuffer, cursor + 1)
 		reader.cursor = cursor + 9
 		return val
 	elseif tagByte == TAG_STR_U8 then
+		if cursor + 2 > reader.len then
+			reader.cursor = reader.len
+			return ""
+		end
 		local strLen = buffer_readu8(sourceBuffer, cursor + 1)
+		if cursor + 2 + strLen > reader.len then
+			strLen = math_max(0, reader.len - (cursor + 2))
+			local val = if strLen > 0 then buffer_readstring(sourceBuffer, cursor + 2, strLen) else ""
+			reader.cursor = reader.len
+			return val
+		end
 		local val = if strLen > 0 then buffer_readstring(sourceBuffer, cursor + 2, strLen) else ""
 		reader.cursor = cursor + 2 + strLen
 		return val
 	elseif tagByte == TAG_STR_U16 then
+		if cursor + 3 > reader.len then
+			reader.cursor = reader.len
+			return ""
+		end
 		local strLen = buffer_readu16(sourceBuffer, cursor + 1)
+		if cursor + 3 + strLen > reader.len then
+			strLen = math_max(0, reader.len - (cursor + 3))
+			local val = if strLen > 0 then buffer_readstring(sourceBuffer, cursor + 3, strLen) else ""
+			reader.cursor = reader.len
+			return val
+		end
 		local val = buffer_readstring(sourceBuffer, cursor + 3, strLen)
 		reader.cursor = cursor + 3 + strLen
 		return val
 	elseif tagByte == TAG_STR_U32 then
+		if cursor + 5 > reader.len then
+			reader.cursor = reader.len
+			return ""
+		end
 		local strLen = buffer_readu32(sourceBuffer, cursor + 1)
+		if cursor + 5 + strLen > reader.len then
+			strLen = math_max(0, reader.len - (cursor + 5))
+			local val = if strLen > 0 then buffer_readstring(sourceBuffer, cursor + 5, strLen) else ""
+			reader.cursor = reader.len
+			return val
+		end
 		local val = buffer_readstring(sourceBuffer, cursor + 5, strLen)
 		reader.cursor = cursor + 5 + strLen
 		return val
 	elseif tagByte == TAG_BUF_U32 then
+		if cursor + 5 > reader.len then
+			reader.cursor = reader.len
+			return buffer_create(0)
+		end
 		local bufLen = buffer_readu32(sourceBuffer, cursor + 1)
+		if cursor + 5 + bufLen > reader.len then
+			bufLen = math_max(0, reader.len - (cursor + 5))
+		end
 		local newBuf = buffer_create(bufLen)
-		buffer_copy(newBuf, 0, sourceBuffer, cursor + 5, bufLen)
+		if bufLen > 0 then
+			buffer_copy(newBuf, 0, sourceBuffer, cursor + 5, bufLen)
+		end
 		reader.cursor = cursor + 5 + bufLen
 		return newBuf
 	elseif tagByte == TAG_VEC3 then
+		if cursor + 13 > reader.len then
+			reader.cursor = reader.len
+			return Vector3.zero
+		end
 		local x = buffer_readf32(sourceBuffer, cursor + 1)
 		local y = buffer_readf32(sourceBuffer, cursor + 5)
 		local z = buffer_readf32(sourceBuffer, cursor + 9)
 		reader.cursor = cursor + 13
 		return Vector3.new(x, y, z)
 	elseif tagByte == TAG_VEC2 then
+		if cursor + 9 > reader.len then
+			reader.cursor = reader.len
+			return Vector2.zero
+		end
 		local x = buffer_readf32(sourceBuffer, cursor + 1)
 		local y = buffer_readf32(sourceBuffer, cursor + 5)
 		reader.cursor = cursor + 9
 		return Vector2.new(x, y)
 	elseif tagByte == TAG_CFRAME then
+		if cursor + 49 > reader.len then
+			reader.cursor = reader.len
+			return CFrame.identity
+		end
 		local cf = CFrame.new(
 			buffer_readf32(sourceBuffer, cursor + 1),
 			buffer_readf32(sourceBuffer, cursor + 5),
@@ -2142,17 +2270,29 @@ readAnyValue = function(reader: Reader, currentDepth: number): any
 		reader.cursor = cursor + 49
 		return cf
 	elseif tagByte == TAG_COLOR3 then
+		if cursor + 4 > reader.len then
+			reader.cursor = reader.len
+			return Color3.fromRGB(0, 0, 0)
+		end
 		local r = buffer_readu8(sourceBuffer, cursor + 1)
 		local g = buffer_readu8(sourceBuffer, cursor + 2)
 		local b = buffer_readu8(sourceBuffer, cursor + 3)
 		reader.cursor = cursor + 4
 		return Color3.fromRGB(r, g, b)
 	elseif tagByte == TAG_UDIM then
+		if cursor + 9 > reader.len then
+			reader.cursor = reader.len
+			return UDim.new()
+		end
 		local scale = buffer_readf32(sourceBuffer, cursor + 1)
 		local offset = buffer_readi32(sourceBuffer, cursor + 5)
 		reader.cursor = cursor + 9
 		return UDim.new(scale, offset)
 	elseif tagByte == TAG_UDIM2 then
+		if cursor + 17 > reader.len then
+			reader.cursor = reader.len
+			return UDim2.new()
+		end
 		local xs = buffer_readf32(sourceBuffer, cursor + 1)
 		local xo = buffer_readi32(sourceBuffer, cursor + 5)
 		local ys = buffer_readf32(sourceBuffer, cursor + 9)
@@ -2160,20 +2300,40 @@ readAnyValue = function(reader: Reader, currentDepth: number): any
 		reader.cursor = cursor + 17
 		return UDim2.new(xs, xo, ys, yo)
 	elseif tagByte == TAG_INST_REF then
+		if cursor + 5 > reader.len then
+			reader.cursor = reader.len
+			return nil
+		end
 		local instIdx = buffer_readu32(sourceBuffer, cursor + 1)
 		reader.cursor = cursor + 5
 		return reader.insts[instIdx]
 	elseif tagByte == TAG_ENUM then
+		if cursor + 2 > reader.len then
+			reader.cursor = reader.len
+			return nil
+		end
 		local nLen = buffer_readu8(sourceBuffer, cursor + 1)
+		if cursor + 6 + nLen > reader.len then
+			reader.cursor = reader.len
+			return nil
+		end
 		local eName = buffer_readstring(sourceBuffer, cursor + 2, nLen)
 		local eVal = buffer_readu32(sourceBuffer, cursor + 2 + nLen)
 		reader.cursor = cursor + 6 + nLen
 		return getCachedEnumItem(eName, eVal)
 	elseif tagByte == TAG_BRICKCOLOR then
+		if cursor + 3 > reader.len then
+			reader.cursor = reader.len
+			return BrickColor.new(1)
+		end
 		local num = buffer_readu16(sourceBuffer, cursor + 1)
 		reader.cursor = cursor + 3
 		return BrickColor.new(num)
 	elseif tagByte == TAG_RECT then
+		if cursor + 17 > reader.len then
+			reader.cursor = reader.len
+			return Rect.new(0, 0, 0, 0)
+		end
 		local minX = buffer_readf32(sourceBuffer, cursor + 1)
 		local minY = buffer_readf32(sourceBuffer, cursor + 5)
 		local maxX = buffer_readf32(sourceBuffer, cursor + 9)
@@ -2181,6 +2341,10 @@ readAnyValue = function(reader: Reader, currentDepth: number): any
 		reader.cursor = cursor + 17
 		return Rect.new(minX, minY, maxX, maxY)
 	elseif tagByte == TAG_RAY then
+		if cursor + 25 > reader.len then
+			reader.cursor = reader.len
+			return Ray.new(Vector3.zero, Vector3.zero)
+		end
 		local ox = buffer_readf32(sourceBuffer, cursor + 1)
 		local oy = buffer_readf32(sourceBuffer, cursor + 5)
 		local oz = buffer_readf32(sourceBuffer, cursor + 9)
@@ -2190,11 +2354,19 @@ readAnyValue = function(reader: Reader, currentDepth: number): any
 		reader.cursor = cursor + 25
 		return Ray.new(Vector3.new(ox, oy, oz), Vector3.new(dx, dy, dz))
 	elseif tagByte == TAG_NUM_RANGE then
+		if cursor + 9 > reader.len then
+			reader.cursor = reader.len
+			return NumberRange.new(0, 0)
+		end
 		local min = buffer_readf32(sourceBuffer, cursor + 1)
 		local max = buffer_readf32(sourceBuffer, cursor + 5)
 		reader.cursor = cursor + 9
 		return NumberRange.new(min, max)
 	elseif tagByte == TAG_DATETIME then
+		if cursor + 9 > reader.len then
+			reader.cursor = reader.len
+			return DateTime.fromUnixTimestampMillis(0)
+		end
 		local ms = buffer_readf64(sourceBuffer, cursor + 1)
 		reader.cursor = cursor + 9
 		return DateTime.fromUnixTimestampMillis(ms)
