@@ -13,7 +13,6 @@ local Remotes = require(script.Parent.Utils.Remotes)
 local Buffers_CreateWriter = Buffers.CreateWriter
 local Buffers_FreeWriter = Buffers.FreeWriter
 local Buffers_Finalize = Buffers.Finalize
-local table_clear = table.clear
 
 local Bridge = {}
 
@@ -31,6 +30,7 @@ local frameConnection: RBXScriptConnection?
 local playerRemovingConnection: RBXScriptConnection?
 
 local isInitializing = false
+local isFlushing = false
 
 function Bridge.Initialize()
 	if (frameConnection and frameConnection.Connected) or isInitializing then
@@ -38,13 +38,21 @@ function Bridge.Initialize()
 	end
 	isInitializing = true
 
-	local remoteGroup = if IS_SERVER then Remotes.Create() else Remotes.Get()
+	local success, result = pcall(function()
+		return if IS_SERVER then Remotes.Create() else Remotes.Get()
+	end)
+
+	if not success then
+		isInitializing = false
+		error(result, 2)
+	end
 
 	if frameConnection and frameConnection.Connected then
 		isInitializing = false
 		return
 	end
 
+	local remoteGroup = result :: Remotes.RemoteGroup
 	reliableRemote = remoteGroup.Reliable
 	unreliableRemote = remoteGroup.Unreliable
 	frameConnection = RunService.Heartbeat:Connect(Bridge.FlushAll)
@@ -79,9 +87,10 @@ function Bridge.FlushPlayer(player: Player)
 end
 
 function Bridge.FlushAll()
-	if not reliableRemote or not unreliableRemote then
+	if not reliableRemote or not unreliableRemote or isFlushing then
 		return
 	end
+	isFlushing = true
 
 	if IS_SERVER then
 		if broadcastReliableWriter ~= nil then
@@ -104,23 +113,27 @@ function Bridge.FlushAll()
 			Buffers_FreeWriter(writer)
 		end
 
-		for targetPlayer, writer in reliablePlayerWriters do
+		local currentReliable = reliablePlayerWriters
+		reliablePlayerWriters = {}
+
+		for targetPlayer, writer in currentReliable do
 			if writer.cursor > 0 and targetPlayer.Parent ~= nil and targetPlayer:IsDescendantOf(Players) then
 				local packetBuffer, instances = Buffers_Finalize(writer)
 				pcall(reliableRemote.FireClient, reliableRemote, targetPlayer, packetBuffer, instances)
 			end
 			Buffers_FreeWriter(writer)
 		end
-		table_clear(reliablePlayerWriters)
 
-		for targetPlayer, writer in unreliablePlayerWriters do
+		local currentUnreliable = unreliablePlayerWriters
+		unreliablePlayerWriters = {}
+
+		for targetPlayer, writer in currentUnreliable do
 			if writer.cursor > 0 and targetPlayer.Parent ~= nil and targetPlayer:IsDescendantOf(Players) then
 				local packetBuffer, instances = Buffers_Finalize(writer)
 				pcall(unreliableRemote.FireClient, unreliableRemote, targetPlayer, packetBuffer, instances)
 			end
 			Buffers_FreeWriter(writer)
 		end
-		table_clear(unreliablePlayerWriters)
 	else
 		if clientReliableWriter ~= nil then
 			local writer = clientReliableWriter
@@ -142,6 +155,8 @@ function Bridge.FlushAll()
 			Buffers_FreeWriter(writer)
 		end
 	end
+
+	isFlushing = false
 end
 
 function Bridge.ClientWriter(isReliable: boolean): Buffers.Writer
@@ -177,6 +192,9 @@ end
 function Bridge.Writer(isReliable: boolean, targetPlayer: Player?): Buffers.Writer
 	if IS_SERVER then
 		if targetPlayer ~= nil then
+			if typeof(targetPlayer) ~= "Instance" or not targetPlayer:IsA("Player") then
+				error("Jolt: targetPlayer must be a valid Player instance.", 2)
+			end
 			local writerMap = if isReliable then reliablePlayerWriters else unreliablePlayerWriters
 			local writer = writerMap[targetPlayer]
 			if writer == nil then

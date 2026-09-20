@@ -176,9 +176,13 @@ local function onServerNetworkEvent(player: Player, rawBuffer: buffer, instanceL
 
 	pcall(function()
 		while reader.cursor < totalLength do
+			if reader.cursor + 3 > totalLength then
+				break
+			end
+			local prevCursor = reader.cursor
 			local channelHash, packetType, argumentCount = Buffers_ReadEventHeader(reader)
 
-			if argumentCount > MAX_PACKET_ARGUMENTS or reader.cursor > totalLength then
+			if argumentCount > MAX_PACKET_ARGUMENTS or reader.cursor > totalLength or reader.cursor <= prevCursor then
 				break
 			end
 
@@ -335,6 +339,9 @@ function Server:Wait(): (Player, ...any)
 end
 
 function Server:Fire(player: Player, ...: any)
+	if typeof(player) ~= "Instance" or not player:IsA("Player") then
+		return
+	end
 	if player.Parent == nil or not player:IsDescendantOf(Players) then
 		return
 	end
@@ -343,6 +350,9 @@ function Server:Fire(player: Player, ...: any)
 end
 
 function Server:FireUnreliable(player: Player, ...: any)
+	if typeof(player) ~= "Instance" or not player:IsA("Player") then
+		return
+	end
 	if player.Parent == nil or not player:IsDescendantOf(Players) then
 		return
 	end
@@ -471,6 +481,9 @@ function Server:FireExceptUnreliable(exceptPlayer: Player, ...: any)
 end
 
 function Server:Invoke(player: Player, ...: any): ...any
+	if typeof(player) ~= "Instance" or not player:IsA("Player") then
+		error("Jolt: player must be a valid Player instance.", 2)
+	end
 	if player.Parent == nil or not player:IsDescendantOf(Players) then
 		error("Jolt: Cannot invoke disconnected player.", 2)
 	end
@@ -566,5 +579,7 @@ function Server.Initialize()
 		end)
 	end
 end
+
+Server.Initialize()
 
 return Server

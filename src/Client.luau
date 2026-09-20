@@ -149,9 +149,13 @@ local function onClientNetworkEvent(rawBuffer: buffer, instanceList: { Instance 
 
 	pcall(function()
 		while reader.cursor < totalLength do
+			if reader.cursor + 3 > totalLength then
+				break
+			end
+			local prevCursor = reader.cursor
 			local channelHash, packetType, argumentCount = Buffers_ReadEventHeader(reader)
 
-			if argumentCount > MAX_PACKET_ARGUMENTS or reader.cursor > totalLength then
+			if argumentCount > MAX_PACKET_ARGUMENTS or reader.cursor > totalLength or reader.cursor <= prevCursor then
 				break
 			end
 
@@ -359,14 +363,22 @@ function Client.Initialize()
 	end
 	isClientInitializing = true
 
-	Bridge.Initialize()
-	local remoteGroup = Remotes.Get()
+	local success, result = pcall(function()
+		Bridge.Initialize()
+		return Remotes.Get()
+	end)
+
+	if not success then
+		isClientInitializing = false
+		error(result, 2)
+	end
 
 	if reliableConnection and reliableConnection.Connected then
 		isClientInitializing = false
 		return
 	end
 
+	local remoteGroup = result :: Remotes.RemoteGroup
 	reliableRemote = remoteGroup.Reliable
 	unreliableRemote = remoteGroup.Unreliable
 	reliableConnection = reliableRemote.OnClientEvent:Connect(onClientNetworkEvent)

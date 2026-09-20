@@ -40,8 +40,12 @@ export type Client<Args... = (...any), Out... = (...any)> = {
 	OnInvoke: ((Args...) -> Out...)?,
 }
 
+if IS_SERVER then
+	require(script.Utils.Remotes).Create()
+end
+
 local Jolt = {
-	Version = "4.3.1",
+	Version = "4.4.0",
 }
 
 function Jolt.Server<Args..., Out...>(channelName: string): Server<Args..., Out...>

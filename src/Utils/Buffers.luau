@@ -9,6 +9,7 @@ export type Writer = {
 	cursor: number,
 	len: number,
 	insts: { Instance },
+	_inPool: boolean?,
 }
 
 export type Reader = {
@@ -16,6 +17,7 @@ export type Reader = {
 	cursor: number,
 	len: number,
 	insts: { Instance },
+	_inPool: boolean?,
 }
 
 local buffer_create = buffer.create
@@ -2168,6 +2170,7 @@ end
 function Buffers.CreateWriter(capacity: number?): Writer
 	local pooledWriter = table.remove(writerMemoryPool)
 	if pooledWriter then
+		pooledWriter._inPool = false
 		pooledWriter.cursor = 0
 		table_clear(pooledWriter.insts)
 		return pooledWriter
@@ -2178,14 +2181,19 @@ function Buffers.CreateWriter(capacity: number?): Writer
 		cursor = 0,
 		len = bufferCapacity,
 		insts = {},
+		_inPool = false,
 	}
 end
 
 function Buffers.FreeWriter(writer: Writer)
+	if (writer :: any)._inPool then
+		return
+	end
 	if writer.len > MAX_REUSABLE_CAPACITY then
 		return
 	end
 	if #writerMemoryPool < 64 then
+		(writer :: any)._inPool = true
 		writer.cursor = 0
 		table_clear(writer.insts)
 		table_insert(writerMemoryPool, writer)
@@ -2195,6 +2203,7 @@ end
 function Buffers.CreateReader(targetBuffer: buffer, attachedInstances: { Instance }?): Reader
 	local pooledReader = table.remove(readerMemoryPool)
 	if pooledReader then
+		pooledReader._inPool = false
 		pooledReader.buff = targetBuffer
 		pooledReader.cursor = 0
 		pooledReader.len = buffer_len(targetBuffer)
@@ -2206,11 +2215,16 @@ function Buffers.CreateReader(targetBuffer: buffer, attachedInstances: { Instanc
 		cursor = 0,
 		len = buffer_len(targetBuffer),
 		insts = attachedInstances or {},
+		_inPool = false,
 	}
 end
 
 function Buffers.FreeReader(reader: Reader)
+	if (reader :: any)._inPool then
+		return
+	end
 	if #readerMemoryPool < 64 then
+		(reader :: any)._inPool = true
 		reader.cursor = 0
 		table_clear(reader.insts)
 		table_insert(readerMemoryPool, reader)
@@ -2238,6 +2252,7 @@ end
 function Buffers.ReadEventHeader(reader: Reader): (number, number, number)
 	local cursor = reader.cursor
 	if cursor + 3 > reader.len then
+		reader.cursor = reader.len
 		return 0, 0, 0
 	end
 	local sourceBuffer = reader.buff
@@ -2259,6 +2274,7 @@ end
 function Buffers.ReadPacketHeader(reader: Reader): (number, number)
 	local cursor = reader.cursor
 	if cursor >= reader.len then
+		reader.cursor = reader.len
 		return 0, 0
 	end
 	local packetHeader = buffer_readu8(reader.buff, cursor)
@@ -2278,6 +2294,7 @@ end
 function Buffers.ReadU16(reader: Reader): number
 	local cursor = reader.cursor
 	if cursor + 2 > reader.len then
+		reader.cursor = reader.len
 		return 0
 	end
 	local value = buffer_readu16(reader.buff, cursor)
@@ -2295,6 +2312,7 @@ end
 function Buffers.ReadU8(reader: Reader): number
 	local cursor = reader.cursor
 	if cursor >= reader.len then
+		reader.cursor = reader.len
 		return 0
 	end
 	local value = buffer_readu8(reader.buff, cursor)

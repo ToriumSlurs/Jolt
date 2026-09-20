@@ -2,6 +2,9 @@
 --!native
 --!optimize 2
 
+local RunService = game:GetService("RunService")
+local IS_SERVER = RunService:IsServer()
+
 local Remotes = {}
 
 local RELIABLE_REMOTE_NAME = "Jolt_Reliable"
@@ -19,12 +22,46 @@ function Remotes.Get(): RemoteGroup
 		return cachedRemoteGroup
 	end
 
-	local reliableEvent = script:FindFirstChild(RELIABLE_REMOTE_NAME) or script:WaitForChild(RELIABLE_REMOTE_NAME, 10)
-	local unreliableEvent = script:FindFirstChild(UNRELIABLE_REMOTE_NAME)
-		or script:WaitForChild(UNRELIABLE_REMOTE_NAME, 10)
+	local reliableEvent = script:FindFirstChild(RELIABLE_REMOTE_NAME) :: RemoteEvent?
+	local unreliableEvent = script:FindFirstChild(UNRELIABLE_REMOTE_NAME) :: UnreliableRemoteEvent?
 
-	if not reliableEvent or not unreliableEvent then
-		error("Jolt: RemoteEvents under Jolt.Utils.Remotes timed out during client initialization.", 2)
+	if reliableEvent and unreliableEvent then
+		local group: RemoteGroup = {
+			Reliable = reliableEvent,
+			Unreliable = unreliableEvent,
+		}
+		cachedRemoteGroup = group
+		return group
+	end
+
+	local startTime = os.clock()
+	local warned = false
+
+	while not reliableEvent or not unreliableEvent do
+		if not reliableEvent then
+			reliableEvent = script:WaitForChild(RELIABLE_REMOTE_NAME, 2) :: RemoteEvent?
+		end
+		if not unreliableEvent then
+			unreliableEvent = script:WaitForChild(UNRELIABLE_REMOTE_NAME, 2) :: UnreliableRemoteEvent?
+		end
+
+		if reliableEvent and unreliableEvent then
+			break
+		end
+
+		local elapsed = os.clock() - startTime
+		if elapsed >= 5 and not warned then
+			warned = true
+			warn("[Jolt] Waiting for RemoteEvents under Jolt.Utils.Remotes... Ensure that a server script requires Jolt at game startup.")
+		end
+
+		if elapsed >= 30 then
+			error(
+				"[Jolt] RemoteEvents under Jolt.Utils.Remotes timed out after 30 seconds during client initialization. "
+					.. "Ensure that a server script requires Jolt at startup to instantiate the remotes.",
+				2
+			)
+		end
 	end
 
 	local group: RemoteGroup = {
@@ -41,8 +78,8 @@ function Remotes.Create(): RemoteGroup
 		return cachedRemoteGroup
 	end
 
-	local reliableEvent = script:FindFirstChild(RELIABLE_REMOTE_NAME)
-	local unreliableEvent = script:FindFirstChild(UNRELIABLE_REMOTE_NAME)
+	local reliableEvent = script:FindFirstChild(RELIABLE_REMOTE_NAME) :: RemoteEvent?
+	local unreliableEvent = script:FindFirstChild(UNRELIABLE_REMOTE_NAME) :: UnreliableRemoteEvent?
 
 	if not reliableEvent then
 		reliableEvent = Instance.new("RemoteEvent")
@@ -57,12 +94,16 @@ function Remotes.Create(): RemoteGroup
 	end
 
 	local group: RemoteGroup = {
-		Reliable = reliableEvent :: RemoteEvent,
-		Unreliable = unreliableEvent :: UnreliableRemoteEvent,
+		Reliable = reliableEvent,
+		Unreliable = unreliableEvent,
 	}
 
 	cachedRemoteGroup = group
 	return group
+end
+
+if IS_SERVER then
+	Remotes.Create()
 end
 
 return Remotes
