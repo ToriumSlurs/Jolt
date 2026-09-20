@@ -19,7 +19,7 @@ Networking library for Roblox that serializes data into binary buffers and batch
 ### Wally
 ```toml
 [dependencies]
-Jolt = "toriumslurs/jolt@4.4.0"
+Jolt = "toriumslurs/jolt@4.4.1"
 ```
 
 ### Manual
