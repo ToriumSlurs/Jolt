@@ -105,7 +105,7 @@ local function handleIncomingRequest(channelHash: number, requestId: any, invoke
 end
 
 local function onClientNetworkEvent(rawBuffer: buffer, instanceList: { Instance }?)
-	if typeof(rawBuffer) ~= "buffer" then
+	if type(rawBuffer) ~= "buffer" then
 		return
 	end
 
@@ -115,12 +115,13 @@ local function onClientNetworkEvent(rawBuffer: buffer, instanceList: { Instance 
 	end
 
 	local validInstances: { Instance }? = nil
-	if typeof(instanceList) == "table" then
+	if type(instanceList) == "table" then
 		local instanceCount = #instanceList
 		if instanceCount > 0 and instanceCount <= 256 then
 			local isClean = true
 			for index = 1, instanceCount do
-				if typeof(instanceList[index]) ~= "Instance" then
+				local inst = instanceList[index]
+				if type(inst) ~= "userdata" or typeof(inst) ~= "Instance" then
 					isClean = false
 					break
 				end
@@ -132,7 +133,7 @@ local function onClientNetworkEvent(rawBuffer: buffer, instanceList: { Instance 
 				local validCount = 0
 				for index = 1, instanceCount do
 					local instanceItem = instanceList[index]
-					if typeof(instanceItem) == "Instance" then
+					if type(instanceItem) == "userdata" and typeof(instanceItem) == "Instance" then
 						validCount += 1
 						cleanList[validCount] = instanceItem
 					end
@@ -147,20 +148,54 @@ local function onClientNetworkEvent(rawBuffer: buffer, instanceList: { Instance 
 	local reader = Buffers_CreateReader(rawBuffer, validInstances)
 	local totalLength = reader.len
 
-	pcall(function()
-		while reader.cursor < totalLength do
-			if reader.cursor + 3 > totalLength then
-				break
-			end
-			local prevCursor = reader.cursor
-			local channelHash, packetType, argumentCount = Buffers_ReadEventHeader(reader)
+	while reader.cursor < totalLength do
+		if reader.cursor + 3 > totalLength then
+			break
+		end
+		local prevCursor = reader.cursor
+		local channelHash, packetType, argumentCount = Buffers_ReadEventHeader(reader)
 
-			if argumentCount > MAX_PACKET_ARGUMENTS or reader.cursor > totalLength or reader.cursor <= prevCursor then
-				break
-			end
+		if argumentCount > MAX_PACKET_ARGUMENTS or reader.cursor > totalLength or reader.cursor <= prevCursor then
+			break
+		end
 
-			local channel = activeChannels[channelHash]
-			if not channel then
+		local channel = activeChannels[channelHash]
+		if not channel then
+			for _ = 1, argumentCount do
+				if reader.cursor >= totalLength then
+					break
+				end
+				Buffers_ReadAny(reader)
+			end
+			continue
+		end
+
+		if packetType == PACKET_EVENT then
+			channel._signal:Fire(Packet_ReadArguments(reader, argumentCount))
+		elseif packetType == PACKET_REQUEST then
+			if argumentCount < 1 then
+				continue
+			end
+			local requestId = Buffers_ReadAny(reader)
+			local handler = channel.OnInvoke
+			if handler ~= nil then
+				task_spawn(
+					handleIncomingRequest,
+					channelHash,
+					requestId,
+					handler,
+					Packet_ReadArguments(reader, argumentCount - 1)
+				)
+			else
+				for _ = 1, argumentCount - 1 do
+					if reader.cursor >= totalLength then
+						break
+					end
+					Buffers_ReadAny(reader)
+				end
+			end
+		elseif packetType == PACKET_RESPONSE then
+			if argumentCount < 2 then
 				for _ = 1, argumentCount do
 					if reader.cursor >= totalLength then
 						break
@@ -169,65 +204,22 @@ local function onClientNetworkEvent(rawBuffer: buffer, instanceList: { Instance 
 				end
 				continue
 			end
+			local requestId = Buffers_ReadAny(reader)
+			local statusValue = Buffers_ReadAny(reader)
+			local isSuccess = statusValue == true or statusValue == 1
 
-			if packetType == PACKET_EVENT then
-				channel._signal:Fire(Packet_ReadArguments(reader, argumentCount))
-			elseif packetType == PACKET_REQUEST then
-				if argumentCount < 1 then
-					continue
-				end
-				local requestId = Buffers_ReadAny(reader)
-				local handler = channel.OnInvoke
-				if handler ~= nil then
-					task_spawn(
-						handleIncomingRequest,
-						channelHash,
-						requestId,
-						handler,
-						Packet_ReadArguments(reader, argumentCount - 1)
-					)
-				else
-					for _ = 1, argumentCount - 1 do
-						if reader.cursor >= totalLength then
-							break
-						end
-						Buffers_ReadAny(reader)
-					end
-				end
-			elseif packetType == PACKET_RESPONSE then
-				if argumentCount < 2 then
-					for _ = 1, argumentCount do
-						if reader.cursor >= totalLength then
-							break
-						end
-						Buffers_ReadAny(reader)
-					end
-					continue
-				end
-				local requestId = Buffers_ReadAny(reader)
-				local statusValue = Buffers_ReadAny(reader)
-				local isSuccess = statusValue == true or statusValue == 1
-
-				if typeof(requestId) == "number" then
-					local pending = channel._pendingRequests[requestId]
-					if pending ~= nil then
-						channel._pendingRequests[requestId] = nil
-						channel._pendingCount = math_max(0, channel._pendingCount - 1)
-						task_cancel(pending.timeoutTimer)
-						if coroutine_status(pending.callingThread) ~= "dead" then
-							task_spawn(
-								pending.callingThread,
-								isSuccess,
-								Packet_ReadArguments(reader, argumentCount - 2)
-							)
-						else
-							for _ = 1, argumentCount - 2 do
-								if reader.cursor >= totalLength then
-									break
-								end
-								Buffers_ReadAny(reader)
-							end
-						end
+			if type(requestId) == "number" then
+				local pending = channel._pendingRequests[requestId]
+				if pending ~= nil then
+					channel._pendingRequests[requestId] = nil
+					channel._pendingCount = math_max(0, channel._pendingCount - 1)
+					task_cancel(pending.timeoutTimer)
+					if coroutine_status(pending.callingThread) ~= "dead" then
+						task_spawn(
+							pending.callingThread,
+							isSuccess,
+							Packet_ReadArguments(reader, argumentCount - 2)
+						)
 					else
 						for _ = 1, argumentCount - 2 do
 							if reader.cursor >= totalLength then
@@ -245,15 +237,22 @@ local function onClientNetworkEvent(rawBuffer: buffer, instanceList: { Instance 
 					end
 				end
 			else
-				for _ = 1, argumentCount do
+				for _ = 1, argumentCount - 2 do
 					if reader.cursor >= totalLength then
 						break
 					end
 					Buffers_ReadAny(reader)
 				end
 			end
+		else
+			for _ = 1, argumentCount do
+				if reader.cursor >= totalLength then
+					break
+				end
+				Buffers_ReadAny(reader)
+			end
 		end
-	end)
+	end
 
 	Buffers_FreeReader(reader)
 end
@@ -267,7 +266,7 @@ function Client.new<Args..., Out...>(channelName: string): Client<Args..., Out..
 	local existingChannel = activeChannels[channelHash]
 	if existingChannel ~= nil then
 		if existingChannel._id ~= channelName then
-			error(`Jolt: Hash collision between '{existingChannel._id}' and '{channelName}'. Rename one channel.`, 2)
+			error("Jolt: Hash collision between '" .. existingChannel._id .. "' and '" .. channelName .. "'. Rename one channel.", 2)
 		end
 		return existingChannel :: any
 	end

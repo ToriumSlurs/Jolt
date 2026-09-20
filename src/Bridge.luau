@@ -192,7 +192,7 @@ end
 function Bridge.Writer(isReliable: boolean, targetPlayer: Player?): Buffers.Writer
 	if IS_SERVER then
 		if targetPlayer ~= nil then
-			if typeof(targetPlayer) ~= "Instance" or not targetPlayer:IsA("Player") then
+			if type(targetPlayer) ~= "userdata" or typeof(targetPlayer) ~= "Instance" or not targetPlayer:IsA("Player") then
 				error("Jolt: targetPlayer must be a valid Player instance.", 2)
 			end
 			local writerMap = if isReliable then reliablePlayerWriters else unreliablePlayerWriters

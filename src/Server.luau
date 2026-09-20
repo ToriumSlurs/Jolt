@@ -132,7 +132,7 @@ local function handleIncomingRequest(
 end
 
 local function onServerNetworkEvent(player: Player, rawBuffer: buffer, instanceList: { Instance }?)
-	if typeof(rawBuffer) ~= "buffer" then
+	if type(rawBuffer) ~= "buffer" then
 		return
 	end
 
@@ -142,12 +142,13 @@ local function onServerNetworkEvent(player: Player, rawBuffer: buffer, instanceL
 	end
 
 	local validInstances: { Instance }? = nil
-	if typeof(instanceList) == "table" then
+	if type(instanceList) == "table" then
 		local instanceCount = #instanceList
 		if instanceCount > 0 and instanceCount <= 256 then
 			local isClean = true
 			for index = 1, instanceCount do
-				if typeof(instanceList[index]) ~= "Instance" then
+				local inst = instanceList[index]
+				if type(inst) ~= "userdata" or typeof(inst) ~= "Instance" then
 					isClean = false
 					break
 				end
@@ -159,7 +160,7 @@ local function onServerNetworkEvent(player: Player, rawBuffer: buffer, instanceL
 				local validCount = 0
 				for index = 1, instanceCount do
 					local instanceItem = instanceList[index]
-					if typeof(instanceItem) == "Instance" then
+					if type(instanceItem) == "userdata" and typeof(instanceItem) == "Instance" then
 						validCount += 1
 						cleanList[validCount] = instanceItem
 					end
@@ -174,20 +175,66 @@ local function onServerNetworkEvent(player: Player, rawBuffer: buffer, instanceL
 	local reader = Buffers_CreateReader(rawBuffer, validInstances)
 	local totalLength = reader.len
 
-	pcall(function()
-		while reader.cursor < totalLength do
-			if reader.cursor + 3 > totalLength then
-				break
-			end
-			local prevCursor = reader.cursor
-			local channelHash, packetType, argumentCount = Buffers_ReadEventHeader(reader)
+	while reader.cursor < totalLength do
+		if reader.cursor + 3 > totalLength then
+			break
+		end
+		local prevCursor = reader.cursor
+		local channelHash, packetType, argumentCount = Buffers_ReadEventHeader(reader)
 
-			if argumentCount > MAX_PACKET_ARGUMENTS or reader.cursor > totalLength or reader.cursor <= prevCursor then
-				break
-			end
+		if argumentCount > MAX_PACKET_ARGUMENTS or reader.cursor > totalLength or reader.cursor <= prevCursor then
+			break
+		end
 
-			local channel = activeChannels[channelHash]
-			if not channel then
+		local channel = activeChannels[channelHash]
+		if not channel then
+			for _ = 1, argumentCount do
+				if reader.cursor >= totalLength then
+					break
+				end
+				Buffers_ReadAny(reader)
+			end
+			continue
+		end
+
+		if packetType == PACKET_EVENT then
+			channel._signal:Fire(player, Packet_ReadArguments(reader, argumentCount))
+		elseif packetType == PACKET_REQUEST then
+			if argumentCount < 1 then
+				continue
+			end
+			local requestId = Buffers_ReadAny(reader)
+			local handler = channel.OnInvoke
+			if handler ~= nil then
+				local currentIncoming = incomingRequestCounts[player] or 0
+				if currentIncoming >= MAX_PENDING_REQUESTS then
+					for _ = 1, argumentCount - 1 do
+						if reader.cursor >= totalLength then
+							break
+						end
+						Buffers_ReadAny(reader)
+					end
+				else
+					incomingRequestCounts[player] = currentIncoming + 1
+					task_spawn(
+						handleIncomingRequest,
+						handler,
+						player,
+						channelHash,
+						requestId,
+						Packet_ReadArguments(reader, argumentCount - 1)
+					)
+				end
+			else
+				for _ = 1, argumentCount - 1 do
+					if reader.cursor >= totalLength then
+						break
+					end
+					Buffers_ReadAny(reader)
+				end
+			end
+		elseif packetType == PACKET_RESPONSE then
+			if argumentCount < 2 then
 				for _ = 1, argumentCount do
 					if reader.cursor >= totalLength then
 						break
@@ -196,78 +243,23 @@ local function onServerNetworkEvent(player: Player, rawBuffer: buffer, instanceL
 				end
 				continue
 			end
+			local requestId = Buffers_ReadAny(reader)
+			local statusValue = Buffers_ReadAny(reader)
+			local isSuccess = statusValue == true or statusValue == 1
 
-			if packetType == PACKET_EVENT then
-				channel._signal:Fire(player, Packet_ReadArguments(reader, argumentCount))
-			elseif packetType == PACKET_REQUEST then
-				if argumentCount < 1 then
-					continue
-				end
-				local requestId = Buffers_ReadAny(reader)
-				local handler = channel.OnInvoke
-				if handler ~= nil then
-					local currentIncoming = incomingRequestCounts[player] or 0
-					if currentIncoming >= MAX_PENDING_REQUESTS then
-						for _ = 1, argumentCount - 1 do
-							if reader.cursor >= totalLength then
-								break
-							end
-							Buffers_ReadAny(reader)
-						end
-					else
-						incomingRequestCounts[player] = currentIncoming + 1
+			local playerRequestMap = channel._pendingRequests[player]
+			if playerRequestMap ~= nil and type(requestId) == "number" then
+				local pending = playerRequestMap[requestId]
+				if pending ~= nil then
+					playerRequestMap[requestId] = nil
+					channel._pendingCounts[player] = math_max(0, (channel._pendingCounts[player] or 1) - 1)
+					task_cancel(pending.timeoutTimer)
+					if coroutine_status(pending.callingThread) ~= "dead" then
 						task_spawn(
-							handleIncomingRequest,
-							handler,
-							player,
-							channelHash,
-							requestId,
-							Packet_ReadArguments(reader, argumentCount - 1)
+							pending.callingThread,
+							isSuccess,
+							Packet_ReadArguments(reader, argumentCount - 2)
 						)
-					end
-				else
-					for _ = 1, argumentCount - 1 do
-						if reader.cursor >= totalLength then
-							break
-						end
-						Buffers_ReadAny(reader)
-					end
-				end
-			elseif packetType == PACKET_RESPONSE then
-				if argumentCount < 2 then
-					for _ = 1, argumentCount do
-						if reader.cursor >= totalLength then
-							break
-						end
-						Buffers_ReadAny(reader)
-					end
-					continue
-				end
-				local requestId = Buffers_ReadAny(reader)
-				local statusValue = Buffers_ReadAny(reader)
-				local isSuccess = statusValue == true or statusValue == 1
-
-				local playerRequestMap = channel._pendingRequests[player]
-				if playerRequestMap ~= nil and typeof(requestId) == "number" then
-					local pending = playerRequestMap[requestId]
-					if pending ~= nil then
-						playerRequestMap[requestId] = nil
-						channel._pendingCounts[player] = math_max(0, (channel._pendingCounts[player] or 1) - 1)
-						task_cancel(pending.timeoutTimer)
-						if coroutine_status(pending.callingThread) ~= "dead" then
-							task_spawn(
-								pending.callingThread,
-								isSuccess,
-								Packet_ReadArguments(reader, argumentCount - 2)
-							)
-						else
-							for _ = 1, argumentCount - 2 do
-								if reader.cursor >= totalLength then
-									break
-								end
-								Buffers_ReadAny(reader)
-							end
-						end
 					else
 						for _ = 1, argumentCount - 2 do
 							if reader.cursor >= totalLength then
@@ -285,15 +277,22 @@ local function onServerNetworkEvent(player: Player, rawBuffer: buffer, instanceL
 					end
 				end
 			else
-				for _ = 1, argumentCount do
+				for _ = 1, argumentCount - 2 do
 					if reader.cursor >= totalLength then
 						break
 					end
 					Buffers_ReadAny(reader)
 				end
 			end
+		else
+			for _ = 1, argumentCount do
+				if reader.cursor >= totalLength then
+					break
+				end
+				Buffers_ReadAny(reader)
+			end
 		end
-	end)
+	end
 
 	Buffers_FreeReader(reader)
 end
@@ -307,7 +306,7 @@ function Server.new<Args..., Out...>(channelName: string): Server<Args..., Out..
 	local existingChannel = activeChannels[channelHash]
 	if existingChannel ~= nil then
 		if existingChannel._id ~= channelName then
-			error(`Jolt: Hash collision between '{existingChannel._id}' and '{channelName}'. Rename one channel.`, 2)
+			error("Jolt: Hash collision between '" .. existingChannel._id .. "' and '" .. channelName .. "'. Rename one channel.", 2)
 		end
 		return existingChannel :: any
 	end
@@ -339,7 +338,7 @@ function Server:Wait(): (Player, ...any)
 end
 
 function Server:Fire(player: Player, ...: any)
-	if typeof(player) ~= "Instance" or not player:IsA("Player") then
+	if type(player) ~= "userdata" or typeof(player) ~= "Instance" or not player:IsA("Player") then
 		return
 	end
 	if player.Parent == nil or not player:IsDescendantOf(Players) then
@@ -350,7 +349,7 @@ function Server:Fire(player: Player, ...: any)
 end
 
 function Server:FireUnreliable(player: Player, ...: any)
-	if typeof(player) ~= "Instance" or not player:IsA("Player") then
+	if type(player) ~= "userdata" or typeof(player) ~= "Instance" or not player:IsA("Player") then
 		return
 	end
 	if player.Parent == nil or not player:IsDescendantOf(Players) then
@@ -481,7 +480,7 @@ function Server:FireExceptUnreliable(exceptPlayer: Player, ...: any)
 end
 
 function Server:Invoke(player: Player, ...: any): ...any
-	if typeof(player) ~= "Instance" or not player:IsA("Player") then
+	if type(player) ~= "userdata" or typeof(player) ~= "Instance" or not player:IsA("Player") then
 		error("Jolt: player must be a valid Player instance.", 2)
 	end
 	if player.Parent == nil or not player:IsDescendantOf(Players) then

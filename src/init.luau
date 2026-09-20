@@ -45,7 +45,7 @@ if IS_SERVER then
 end
 
 local Jolt = {
-	Version = "4.4.0",
+	Version = Constants.VERSION,
 }
 
 function Jolt.Server<Args..., Out...>(channelName: string): Server<Args..., Out...>

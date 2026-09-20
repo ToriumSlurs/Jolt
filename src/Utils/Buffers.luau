@@ -323,7 +323,7 @@ local function writeVector2Array(writer: Writer, targetTable: { [any]: any }, ar
 
 	for index = 1, arrayLength do
 		local v = targetTable[index]
-		if typeof(v) ~= "Vector2" then
+		if type(v) ~= "userdata" or typeof(v) ~= "Vector2" then
 			writer.cursor = origCursor
 			return false
 		end
@@ -353,7 +353,16 @@ local function writeColor3Array(writer: Writer, targetTable: { [any]: any }, arr
 		local c1 = targetTable[index + 1]
 		local c2 = targetTable[index + 2]
 		local c3 = targetTable[index + 3]
-		if typeof(c0) ~= "Color3" or typeof(c1) ~= "Color3" or typeof(c2) ~= "Color3" or typeof(c3) ~= "Color3" then
+		if
+			type(c0) ~= "userdata"
+			or typeof(c0) ~= "Color3"
+			or type(c1) ~= "userdata"
+			or typeof(c1) ~= "Color3"
+			or type(c2) ~= "userdata"
+			or typeof(c2) ~= "Color3"
+			or type(c3) ~= "userdata"
+			or typeof(c3) ~= "Color3"
+		then
 			writer.cursor = origCursor
 			return false
 		end
@@ -373,7 +382,7 @@ local function writeColor3Array(writer: Writer, targetTable: { [any]: any }, arr
 	end
 	for index = unrolled + 1, arrayLength do
 		local c = targetTable[index]
-		if typeof(c) ~= "Color3" then
+		if type(c) ~= "userdata" or typeof(c) ~= "Color3" then
 			writer.cursor = origCursor
 			return false
 		end
@@ -402,7 +411,12 @@ local function writeCFrameArray(writer: Writer, targetTable: { [any]: any }, arr
 	for index = 1, unrolled, 2 do
 		local cf0 = targetTable[index]
 		local cf1 = targetTable[index + 1]
-		if typeof(cf0) ~= "CFrame" or typeof(cf1) ~= "CFrame" then
+		if
+			type(cf0) ~= "userdata"
+			or typeof(cf0) ~= "CFrame"
+			or type(cf1) ~= "userdata"
+			or typeof(cf1) ~= "CFrame"
+		then
 			writer.cursor = origCursor
 			return false
 		end
@@ -436,7 +450,7 @@ local function writeCFrameArray(writer: Writer, targetTable: { [any]: any }, arr
 	end
 	for index = unrolled + 1, arrayLength do
 		local cf = targetTable[index]
-		if typeof(cf) ~= "CFrame" then
+		if type(cf) ~= "userdata" or typeof(cf) ~= "CFrame" then
 			writer.cursor = origCursor
 			return false
 		end
@@ -819,12 +833,15 @@ local function writeDynamicStructArray(
 			cType = COL_BOOL
 		elseif vType == "string" then
 			cType = COL_STR
-		elseif vType == "vector" or typeof(val) == "Vector3" then
+		elseif vType == "vector" or (vType == "userdata" and typeof(val) == "Vector3") then
 			cType = COL_VEC3
-		elseif typeof(val) == "CFrame" then
-			cType = COL_CFRAME
-		elseif typeof(val) == "Color3" then
-			cType = COL_COLOR3
+		elseif vType == "userdata" then
+			local userdataType = typeof(val)
+			if userdataType == "CFrame" then
+				cType = COL_CFRAME
+			elseif userdataType == "Color3" then
+				cType = COL_COLOR3
+			end
 		end
 
 		colTypes[keyCount] = cType
@@ -1069,7 +1086,7 @@ local function writeDictionarySinglePass(writer: Writer, targetTable: { [any]: a
 				cursor = writer.cursor
 				targetBuffer = writer.buff
 			end
-		elseif vType == "vector" or typeof(mapValue) == "Vector3" then
+		elseif vType == "vector" or (vType == "userdata" and typeof(mapValue) == "Vector3") then
 			buffer_writeu8(targetBuffer, cursor, TAG_VEC3)
 			buffer_writef32(targetBuffer, cursor + 1, mapValue.X)
 			buffer_writef32(targetBuffer, cursor + 5, mapValue.Y)
@@ -1606,6 +1623,26 @@ local function readTableValue(reader: Reader, tagByte: number, currentDepth: num
 				buffer_readf32(sourceBuffer, cursor + 8)
 			)
 			cursor += 12
+		end
+		reader.cursor = cursor
+		return arrayResult
+	elseif tagByte == TAG_ARR_VEC2 then
+		local count = readVariableInteger(reader)
+		local availableBytes = (reader.len - reader.cursor) // 8
+		if count > availableBytes then
+			count = availableBytes
+		end
+		if count <= 0 then
+			return {}
+		end
+		local arrayResult = table_create(count) :: { Vector2 }
+		local cursor = reader.cursor
+		for index = 1, count do
+			arrayResult[index] = Vector2.new(
+				buffer_readf32(sourceBuffer, cursor),
+				buffer_readf32(sourceBuffer, cursor + 4)
+			)
+			cursor += 8
 		end
 		reader.cursor = cursor
 		return arrayResult
